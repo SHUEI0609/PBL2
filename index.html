@@ -171,9 +171,11 @@ function clearShape() {
   }
 }
 
+// 透明メッシュ用マテリアル（深度書き込みOFF）
 function createMat(color, opacity=0.95) {
   return new THREE.MeshStandardMaterial({ 
-    color, side: THREE.DoubleSide, transparent: true, opacity, roughness: 0.3, metalness: 0.1 
+    color, side: THREE.DoubleSide, transparent: true, opacity, roughness: 0.3, metalness: 0.1,
+    depthWrite: false // 透明メッシュ同士の重なりを正しく描画
   });
 }
 
@@ -202,24 +204,19 @@ function addSolidMesh(geometry, materials) {
 }
 
 // ===================== 直方体 =====================
-// 立体: BoxGeometry(s,s,s) + 6マテリアル
-// 展開: 十字形 (前面中心、上面上、下面下、左面左、右面右、後面右の右)
 function createCuboid() {
   clearShape();
   const s = 1.2;
   const c = shapeColors.cuboid;
   const h = s/2;
 
-  // 立体Mesh (BoxGeometry + 6マテリアル)
-  // BoxGeometry face order: +x(右), -x(左), +y(上), -y(下), +z(前), -z(後)
   const solidMats = [
     createMat(c[0]), createMat(c[1]), createMat(c[2]),
     createMat(c[3]), createMat(c[4]), createMat(c[5])
   ];
   addSolidMesh(new THREE.BoxGeometry(s, s, s), solidMats);
 
-  // 展開図: 6面のPlaneGeometry
-  // 前面(+z)を中心に十字形
+  // 十字形展開図（Z=0平面上）
   addNetFace(new THREE.PlaneGeometry(s,s), c[4],
     new THREE.Vector3(0,0,h), new THREE.Euler(0,0,0),
     new THREE.Vector3(0,0,0), new THREE.Euler(0,0,0), '前面');
@@ -246,20 +243,17 @@ function createCuboid() {
 }
 
 // ===================== 円柱 =====================
-// 立体: CylinderGeometry(r,r,h,32,1,false) + 3マテリアル (側面,上面,下面)
-// 展開: 上底(円), 下底(円), 側面(長方形 2πr × h)
 function createCylinder() {
   clearShape();
   const r = 0.6, h = 1.2;
   const c = shapeColors.cylinder;
   const circum = 2 * Math.PI * r; // ≈ 3.77
 
-  // 立体Mesh
   const cylGeom = new THREE.CylinderGeometry(r, r, h, 32, 1, false);
   const cylMats = [createMat(c[0]), createMat(c[1]), createMat(c[2])];
   addSolidMesh(cylGeom, cylMats);
 
-  // 展開図
+  // 展開図：上底・下底・側面（長方形）
   addNetFace(new THREE.CircleGeometry(r,32), c[1],
     new THREE.Vector3(0,h/2,0), new THREE.Euler(-Math.PI/2,0,0),
     new THREE.Vector3(0,1.0,0), new THREE.Euler(0,0,0), '上底');
@@ -268,42 +262,44 @@ function createCylinder() {
     new THREE.Vector3(0,-h/2,0), new THREE.Euler(Math.PI/2,0,0),
     new THREE.Vector3(0,-1.0,0), new THREE.Euler(0,0,0), '下底');
 
-  addNetFace(new THREE.PlaneGeometry(circum,h), c[0],
+  // 側面：長方形（円周 × 高さ）を画面に収めるようスケール調整
+  const netW = 2.5; // 表示用に調整（数学的比率は維持：h/circum = 1.2/3.77 ≈ 0.318）
+  const netH = netW * (h / circum);
+  addNetFace(new THREE.PlaneGeometry(netW, netH), c[0],
     new THREE.Vector3(0,0,0), new THREE.Euler(0,0,0),
     new THREE.Vector3(0,0,0), new THREE.Euler(0,0,0), '側面');
 }
 
 // ===================== 円すい台 =====================
-// 立体: CylinderGeometry(rTop,rBot,h,32,1,false) + 3マテリアル
-// 展開: 上底(円), 下底(円), 側面(台形)
 function createFrustum() {
   clearShape();
   const rTop = 0.4, rBot = 0.7, h = 1.2;
   const c = shapeColors.frustum;
-  const slant = Math.sqrt(h*h + (rBot-rTop)*(rBot-rTop)); // 母線の長さ
+  const slant = Math.sqrt(h*h + (rBot-rTop)*(rBot-rTop));
   const topW = 2 * Math.PI * rTop;
   const botW = 2 * Math.PI * rBot;
 
-  // 立体Mesh
   const cylGeom = new THREE.CylinderGeometry(rTop, rBot, h, 32, 1, false);
   const cylMats = [createMat(c[0]), createMat(c[1]), createMat(c[2])];
   addSolidMesh(cylGeom, cylMats);
 
-  // 展開図
+  // 上底
   addNetFace(new THREE.CircleGeometry(rTop,32), c[1],
     new THREE.Vector3(0,h/2,0), new THREE.Euler(-Math.PI/2,0,0),
-    new THREE.Vector3(0,1.2,0), new THREE.Euler(0,0,0), '上底');
+    new THREE.Vector3(0,1.0,0), new THREE.Euler(0,0,0), '上底');
 
+  // 下底
   addNetFace(new THREE.CircleGeometry(rBot,32), c[2],
     new THREE.Vector3(0,-h/2,0), new THREE.Euler(Math.PI/2,0,0),
-    new THREE.Vector3(0,-1.2,0), new THREE.Euler(0,0,0), '下底');
+    new THREE.Vector3(0,-1.0,0), new THREE.Euler(0,0,0), '下底');
 
-  // 台形の展開図 (ShapeGeometry)
+  // 側面：台形（数学的比率を維持してスケール調整）
+  const scale = 0.55;
   const shape = new THREE.Shape();
-  shape.moveTo(-botW/2, -slant/2);
-  shape.lineTo(botW/2, -slant/2);
-  shape.lineTo(topW/2, slant/2);
-  shape.lineTo(-topW/2, slant/2);
+  shape.moveTo(-botW/2 * scale, -slant/2 * scale);
+  shape.lineTo(botW/2 * scale, -slant/2 * scale);
+  shape.lineTo(topW/2 * scale, slant/2 * scale);
+  shape.lineTo(-topW/2 * scale, slant/2 * scale);
   shape.closePath();
   const trapGeom = new THREE.ShapeGeometry(shape);
   addNetFace(trapGeom, c[0],
@@ -312,64 +308,61 @@ function createFrustum() {
 }
 
 // ===================== 円すい =====================
-// 立体: ConeGeometry(r,h,32,1,false) + 2マテリアル (側面,底面)
-// 展開: 底面(円), 側面(扇形)
 function createCone() {
   clearShape();
   const r = 0.7, h = 1.4;
   const c = shapeColors.cone;
-  const slant = Math.sqrt(r*r + h*h); // 母線
-  const theta = (2 * Math.PI * r) / slant; // 扇形の中心角
+  const slant = Math.sqrt(r*r + h*h);
+  const theta = (2 * Math.PI * r) / slant;
 
-  // 立体Mesh
   const coneGeom = new THREE.ConeGeometry(r, h, 32, 1, false);
   const coneMats = [createMat(c[0]), createMat(c[1])];
   addSolidMesh(coneGeom, coneMats);
 
-  // 展開図: 底面
+  // 底面（円）— 展開時は中心に配置
   addNetFace(new THREE.CircleGeometry(r,32), c[1],
     new THREE.Vector3(0,-h/2,0), new THREE.Euler(Math.PI/2,0,0),
-    new THREE.Vector3(0,-1.2,0), new THREE.Euler(0,0,0), '底面');
+    new THREE.Vector3(0,-0.6,0), new THREE.Euler(0,0,0), '底面');
 
-  // 展開図: 扇形側面
+  // 側面：扇形（数学的比率を維持してスケール調整）
+  const scale = 0.65;
   const sector = new THREE.Shape();
   sector.moveTo(0,0);
-  sector.lineTo(slant, 0);
-  sector.absarc(0, 0, slant, 0, theta, false);
+  sector.lineTo(slant * scale, 0);
+  sector.absarc(0, 0, slant * scale, 0, theta, false);
   sector.lineTo(0,0);
   const sectorGeom = new THREE.ShapeGeometry(sector);
-  const sectorMesh = addNetFace(sectorGeom, c[0],
-    new THREE.Vector3(0,0,0), new THREE.Euler(0,0,0),
-    new THREE.Vector3(0,0.5,0), new THREE.Euler(0,0,0), '側面');
-  // 扇形の中心を調整
-  sectorMesh.userData.netPos.set(0, 0.5, 0);
-  sectorMesh.userData.solidPos.set(0, 0, 0);
+
+  // 扇形の中心を底面の中心に対応させる
+  // 立体時：扇形は底面中心に配置（円すいの底面に接続）
+  // 展開時：扇形を底面の上に配置
+  addNetFace(sectorGeom, c[0],
+    new THREE.Vector3(0,-h/2,0), new THREE.Euler(0,0,0),
+    new THREE.Vector3(0,0.6,0), new THREE.Euler(0,0,0), '側面');
 }
 
 // ===================== 三角柱 =====================
-// 立体: CylinderGeometry(r,r,h,3,1,false) + 3マテリアル (側面,上面,下面)
-// 展開: 上底(正三角形), 下底(正三角形), 3側面(長方形 r√3 × h)
 function createPrism() {
   clearShape();
   const r = 0.7, h = 1.2;
   const c = shapeColors.prism;
   const w = r * Math.sqrt(3); // 正三角形の1辺
 
-  // 立体Mesh (正三角柱)
   const prismGeom = new THREE.CylinderGeometry(r, r, h, 3, 1, false);
   const prismMats = [createMat(c[0]), createMat(c[1]), createMat(c[2])];
   addSolidMesh(prismGeom, prismMats);
 
-  // 展開図
+  // 上底
   addNetFace(new THREE.CircleGeometry(r,3), c[1],
     new THREE.Vector3(0,h/2,0), new THREE.Euler(-Math.PI/2,0,0),
     new THREE.Vector3(w/2, 1.0, 0), new THREE.Euler(0,0,0), '上底');
 
+  // 下底
   addNetFace(new THREE.CircleGeometry(r,3), c[2],
     new THREE.Vector3(0,-h/2,0), new THREE.Euler(Math.PI/2,0,0),
     new THREE.Vector3(w/2, -1.0, 0), new THREE.Euler(0,0,0), '下底');
 
-  // 3側面 (長方形)
+  // 3側面（長方形）
   addNetFace(new THREE.PlaneGeometry(w,h), c[0],
     new THREE.Vector3(0,0,0), new THREE.Euler(0,0,0),
     new THREE.Vector3(0,0,0), new THREE.Euler(0,0,0), '側面1');
@@ -389,10 +382,8 @@ function createSphere() {
   const r = 0.8;
   const c = shapeColors.sphere;
 
-  // 立体Mesh
   addSolidMesh(new THREE.SphereGeometry(r,32,32), createMat(c[0]));
 
-  // 展開不可メッセージ
   const canvas = document.createElement('canvas');
   canvas.width = 512; canvas.height = 128;
   const ctx = canvas.getContext('2d');
@@ -405,7 +396,7 @@ function createSphere() {
   const tex = new THREE.CanvasTexture(canvas);
   const plate = new THREE.Mesh(
     new THREE.PlaneGeometry(3, 0.75),
-    new THREE.MeshStandardMaterial({ map: tex, transparent: true, opacity: 0, side: THREE.DoubleSide })
+    new THREE.MeshStandardMaterial({ map: tex, transparent: true, opacity: 0, side: THREE.DoubleSide, depthWrite: false })
   );
   plate.position.set(0, -1.2, 0);
   plate.userData = { isNetFace: true, solidPos: new THREE.Vector3(0,-1.2,0), netPos: new THREE.Vector3(0,-1.2,0), solidRot: new THREE.Euler(0,0,0), netRot: new THREE.Euler(0,0,0) };
