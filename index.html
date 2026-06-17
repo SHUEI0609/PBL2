@@ -4,213 +4,429 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <meta name="theme-color" content="#0f172a">
-<title>ShapeLens - 実世界物体抽象化・展開図生成</title>
+<title>ShapeLens AR - 立体展開</title>
 <script src="https://cdn.tailwindcss.com"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;700&display=swap');
-  body { font-family: 'Noto Sans JP', sans-serif; background: #0f172a; color: #e2e8f0; overflow-x: hidden; -webkit-tap-highlight-color: transparent; }
-  .glass { background: rgba(30,41,59,0.7); backdrop-filter: blur(12px); border: 1px solid rgba(148,163,184,0.1); }
-  .camera-container { 
-    position: relative; 
-    width: 100%; 
-    aspect-ratio: 4/3; 
-    background: #000; 
-    border-radius: 1rem; 
-    overflow: hidden; 
-  }
-  /* 絶対配置で確実に埋める */
-  .camera-fill {
-    position: absolute;
-    top: 0; left: 0;
-    width: 100%; height: 100%;
-    object-fit: cover;
-    display: block;
-  }
-  .overlay { position: absolute; inset: 0; pointer-events: none; z-index: 5; }
+  body { font-family: 'Noto+Sans+JP', sans-serif; background: #000; color: #e2e8f0; overflow: hidden; margin: 0; -webkit-tap-highlight-color: transparent; }
+  #bgVideo { position: fixed; inset: 0; width: 100vw; height: 100vh; object-fit: cover; z-index: 0; background: #000; }
+  #arCanvas { position: fixed; inset: 0; z-index: 1; width: 100vw; height: 100vh; touch-action: none; }
+  .ui-layer { position: fixed; z-index: 10; pointer-events: none; }
+  .ui-layer > * { pointer-events: auto; }
+  .glass { background: rgba(15,23,42,0.85); backdrop-filter: blur(16px); border: 1px solid rgba(148,163,184,0.15); }
   .scan-line { position: absolute; width: 100%; height: 2px; background: linear-gradient(90deg, transparent, #38bdf8, transparent); animation: scan 2.5s linear infinite; opacity: 0.6; }
   @keyframes scan { 0% { top: 10%; } 50% { top: 90%; } 100% { top: 10%; } }
-  .shape-btn { transition: all 0.2s; }
-  .shape-btn.active { background: #0ea5e9; color: white; border-color: #0ea5e9; }
-  .tab-btn { transition: all 0.2s; }
-  .tab-btn.active { border-bottom: 2px solid #38bdf8; color: #38bdf8; }
-  .net-canvas { background: #f8fafc; border-radius: 0.75rem; width: 100%; aspect-ratio: 1; }
-  .hidden { display: none !important; }
-  .fade-in { animation: fadeIn 0.4s ease-out; }
-  @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
-  .loader { border: 3px solid rgba(56,189,248,0.2); border-top-color: #38bdf8; border-radius: 50%; width: 40px; height: 40px; animation: spin 1s linear infinite; }
+  .loader { border: 3px solid rgba(56,189,248,0.2); border-top-color: #38bdf8; border-radius: 50%; width: 36px; height: 36px; animation: spin 1s linear infinite; }
   @keyframes spin { to { transform: rotate(360deg); } }
-  .ar-badge { position: absolute; background: rgba(15,23,42,0.8); color: #38bdf8; padding: 4px 10px; border-radius: 999px; font-size: 0.75rem; font-weight: 700; border: 1px solid rgba(56,189,248,0.3); }
+  .shape-chip { transition: all 0.2s; }
+  .shape-chip.active { background: #0ea5e9; color: white; border-color: #0ea5e9; box-shadow: 0 0 12px rgba(14,165,233,0.4); }
+  .btn-expand { transition: all 0.3s; }
+  .btn-expand.active { background: #f59e0b; color: white; border-color: #f59e0b; }
+  .hidden { display: none !important; }
+  .fade-up { animation: fadeUp 0.5s ease-out; }
+  @keyframes fadeUp { from { opacity: 0; transform: translateY(30px); } to { opacity: 1; transform: translateY(0); } }
 </style>
 <base target="_blank">
 </head>
-<body class="min-h-screen pb-24">
+<body>
 
-<header class="fixed top-0 w-full z-50 glass border-b border-slate-700/50">
-  <div class="max-w-md mx-auto px-4 h-14 flex items-center justify-between">
-    <div class="flex items-center gap-2">
-      <div class="w-8 h-8 rounded-lg bg-gradient-to-br from-sky-400 to-blue-600 flex items-center justify-center text-white font-bold text-sm">S</div>
-      <h1 class="font-bold text-lg tracking-tight">ShapeLens</h1>
+<!-- 背景カメラ -->
+<video id="bgVideo" autoplay playsinline muted webkit-playsinline></video>
+<img id="uploadPreview" class="hidden" style="position:fixed;inset:0;width:100vw;height:100vh;object-fit:cover;z-index:0;">
+
+<!-- Three.js AR Canvas -->
+<canvas id="arCanvas"></canvas>
+
+<!-- 上部ヘッダー -->
+<div class="ui-layer top-0 left-0 right-0 p-4">
+  <div class="max-w-md mx-auto flex items-center justify-between">
+    <div class="glass rounded-xl px-4 py-2 flex items-center gap-2">
+      <div class="w-7 h-7 rounded-lg bg-gradient-to-br from-sky-400 to-blue-600 flex items-center justify-center text-white font-bold text-xs">S</div>
+      <span class="font-bold text-sm">ShapeLens <span class="text-sky-400">AR</span></span>
     </div>
-    <div class="text-xs text-slate-400 font-medium">MVP Prototype</div>
+    <label class="glass rounded-xl px-3 py-2 flex items-center gap-2 text-xs text-slate-300 cursor-pointer">
+      <input type="checkbox" id="mockToggle" class="accent-sky-500 w-4 h-4"> モック
+    </label>
   </div>
-</header>
+</div>
 
-<main class="max-w-md mx-auto px-4 pt-20 space-y-6">
+<!-- カメラ起動中 -->
+<div id="cameraLoading" class="ui-layer inset-0 flex flex-col items-center justify-center bg-black/80 z-50">
+  <div class="loader mb-3"></div>
+  <p class="text-sm text-slate-400">カメラを起動中...</p>
+</div>
 
-  <!-- Camera Section -->
-  <section id="cameraSection" class="space-y-3">
+<!-- カメラエラー（フォールバック） -->
+<div id="cameraFallback" class="ui-layer inset-0 flex flex-col items-center justify-center bg-black/90 z-40 hidden">
+  <svg class="w-12 h-12 mb-3 text-slate-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M15 13a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+  <p class="text-sm text-slate-400 mb-4">カメラが使用できません</p>
+  <label class="px-5 py-3 bg-sky-500 text-white font-bold rounded-xl cursor-pointer active:scale-95 transition flex items-center gap-2">
+    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
+    画像をアップロード
+    <input type="file" id="fileInput" accept="image/*" class="hidden" capture="environment">
+  </label>
+</div>
+
+<!-- 中央：撮影ボタン（初期表示） -->
+<div id="captureUI" class="ui-layer inset-0 flex flex-col items-center justify-end pb-24 z-20">
+  <div class="scan-line absolute top-1/4 left-0 right-0 hidden" id="scanLine"></div>
+  <div id="detectionBadge" class="hidden mb-4 glass px-4 py-2 rounded-full text-sky-400 font-bold text-sm border border-sky-500/30">
+    🔍 <span id="detectName">解析中...</span>
+  </div>
+  <button id="shutterBtn" class="w-16 h-16 rounded-full bg-white/20 backdrop-blur border-4 border-white flex items-center justify-center active:scale-90 transition shadow-lg shadow-sky-500/30">
+    <div class="w-12 h-12 rounded-full bg-sky-500"></div>
+  </button>
+  <p class="text-xs text-white/60 mt-3">物体を中央に合わせてタップ</p>
+</div>
+
+<!-- 下部：形状コントロールパネル（撮影後表示） -->
+<div id="controlPanel" class="ui-layer bottom-0 left-0 right-0 p-4 hidden fade-up">
+  <div class="max-w-md mx-auto glass rounded-2xl p-4 space-y-4">
+    <!-- 検出結果 -->
     <div class="flex items-center justify-between">
-      <h2 class="font-bold text-slate-200">1. 物体を撮影</h2>
-      <label class="flex items-center gap-2 text-xs text-slate-400 cursor-pointer select-none">
-        <input type="checkbox" id="mockToggle" class="accent-sky-500 w-4 h-4"> モックモード
-      </label>
-    </div>
-
-    <div class="camera-container shadow-2xl shadow-sky-900/20">
-      <!-- カメラ映像：絶対配置で完全に埋める -->
-      <video id="video" class="camera-fill" autoplay playsinline muted webkit-playsinline></video>
-
-      <!-- アップロード画像 -->
-      <img id="uploadPreview" class="camera-fill hidden" alt="upload">
-
-      <!-- キャプチャ用canvas -->
-      <canvas id="captureCanvas" class="hidden" style="position:absolute;"></canvas>
-
-      <!-- オーバーレイ -->
-      <div class="overlay">
-        <div class="scan-line hidden" id="scanLine"></div>
-        <div id="detectionOverlay" class="hidden absolute inset-0">
-          <div class="absolute border-2 border-sky-400/80 rounded-lg" id="bbox" style="left:20%; top:30%; width:60%; height:40%;">
-            <div class="ar-badge -top-3 left-0" id="detectLabel">解析中...</div>
-          </div>
-        </div>
+      <div>
+        <div class="text-xs text-slate-400">検出物体</div>
+        <div class="font-bold text-sky-400 text-sm" id="detectedObject">--</div>
       </div>
-
-      <!-- カメラフォールバック -->
-      <div id="cameraFallback" class="hidden absolute inset-0 flex flex-col items-center justify-center text-slate-500 bg-slate-900/95 z-10">
-        <svg class="w-12 h-12 mb-3 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M15 13a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
-        <p class="text-sm font-medium mb-1">カメラを使用できません</p>
-        <p class="text-xs text-slate-600 text-center px-6" id="cameraErrorMsg">HTTPS環境でカメラ権限を許可してください</p>
-        <label class="mt-4 px-4 py-2 bg-sky-500 hover:bg-sky-400 text-white text-sm font-bold rounded-lg cursor-pointer transition active:scale-95 flex items-center gap-2">
-          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
-          画像をアップロード
-          <input type="file" id="fileInput" accept="image/*" class="hidden" capture="environment">
-        </label>
-      </div>
-
-      <!-- カメラ起動中ローディング -->
-      <div id="cameraLoading" class="absolute inset-0 flex flex-col items-center justify-center bg-black z-20">
-        <div class="loader mb-3"></div>
-        <p class="text-sm text-slate-400">カメラを起動しています...</p>
-        <p class="text-xs text-slate-600 mt-1">初回はカメラ権限の許可が必要です</p>
+      <div class="flex gap-2">
+        <button id="resetBtn" class="px-3 py-1.5 rounded-lg bg-slate-700 text-white text-xs font-bold">リセット</button>
+        <button id="screenshotBtn" class="px-3 py-1.5 rounded-lg bg-slate-700 text-white text-xs font-bold">保存</button>
       </div>
     </div>
 
-    <div class="flex gap-3">
-      <button id="shutterBtn" class="flex-1 bg-sky-500 hover:bg-sky-400 text-white font-bold py-3 rounded-xl shadow-lg shadow-sky-500/25 transition active:scale-95 flex items-center justify-center gap-2 disabled:opacity-50 disabled:active:scale-100">
-        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 13a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
-        撮影・解析
+    <!-- 形状選択 -->
+    <div class="flex gap-2 overflow-x-auto pb-1 no-scrollbar">
+      <button class="shape-chip px-3 py-1.5 rounded-full border border-slate-600 bg-slate-800/50 text-xs font-medium text-slate-300 whitespace-nowrap active" data-shape="cuboid">直方体</button>
+      <button class="shape-chip px-3 py-1.5 rounded-full border border-slate-600 bg-slate-800/50 text-xs font-medium text-slate-300 whitespace-nowrap" data-shape="cylinder">円柱</button>
+      <button class="shape-chip px-3 py-1.5 rounded-full border border-slate-600 bg-slate-800/50 text-xs font-medium text-slate-300 whitespace-nowrap" data-shape="frustum">円すい台</button>
+      <button class="shape-chip px-3 py-1.5 rounded-full border border-slate-600 bg-slate-800/50 text-xs font-medium text-slate-300 whitespace-nowrap" data-shape="cone">円すい</button>
+      <button class="shape-chip px-3 py-1.5 rounded-full border border-slate-600 bg-slate-800/50 text-xs font-medium text-slate-300 whitespace-nowrap" data-shape="prism">三角柱</button>
+      <button class="shape-chip px-3 py-1.5 rounded-full border border-slate-600 bg-slate-800/50 text-xs font-medium text-slate-300 whitespace-nowrap" data-shape="sphere">球</button>
+    </div>
+
+    <!-- 展開/立体 トグル -->
+    <div class="flex gap-2">
+      <button id="btnSolid" class="btn-expand flex-1 py-3 rounded-xl border border-slate-600 bg-slate-800/50 text-sm font-bold text-slate-300 active flex items-center justify-center gap-2">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"/></svg>
+        立体
       </button>
-      <button id="resetBtn" class="hidden px-4 bg-slate-700 hover:bg-slate-600 text-white font-bold rounded-xl transition active:scale-95">
-        リセット
+      <button id="btnExpand" class="btn-expand flex-1 py-3 rounded-xl border border-slate-600 bg-slate-800/50 text-sm font-bold text-slate-300 flex items-center justify-center gap-2">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4"/></svg>
+        展開
       </button>
     </div>
-  </section>
 
-  <!-- Abstraction Section -->
-  <section id="abstractionSection" class="hidden fade-in space-y-3">
-    <h2 class="font-bold text-slate-200">2. 形状抽象化</h2>
-    <div class="glass rounded-xl p-4 space-y-3">
-      <div class="flex items-center gap-3">
-        <div class="w-10 h-10 rounded-lg bg-slate-700 flex items-center justify-center text-xl">📷</div>
-        <div>
-          <div class="text-sm text-slate-400">検出物体</div>
-          <div class="font-bold text-sky-400" id="detectedObject">--</div>
-        </div>
-      </div>
-      <div class="h-px bg-slate-700/50"></div>
-      <div class="text-sm text-slate-300">教育向けに近似する形状を選択：</div>
-      <div class="grid grid-cols-3 gap-2">
-        <button class="shape-btn py-2 px-1 rounded-lg border border-slate-600 bg-slate-800/50 text-xs font-medium text-slate-300" data-shape="cuboid">直方体</button>
-        <button class="shape-btn py-2 px-1 rounded-lg border border-slate-600 bg-slate-800/50 text-xs font-medium text-slate-300" data-shape="cylinder">円柱</button>
-        <button class="shape-btn py-2 px-1 rounded-lg border border-slate-600 bg-slate-800/50 text-xs font-medium text-slate-300" data-shape="frustum">円すい台</button>
-        <button class="shape-btn py-2 px-1 rounded-lg border border-slate-600 bg-slate-800/50 text-xs font-medium text-slate-300" data-shape="cone">円すい</button>
-        <button class="shape-btn py-2 px-1 rounded-lg border border-slate-600 bg-slate-800/50 text-xs font-medium text-slate-300" data-shape="prism">三角柱</button>
-        <button class="shape-btn py-2 px-1 rounded-lg border border-slate-600 bg-slate-800/50 text-xs font-medium text-slate-300" data-shape="sphere">球</button>
-      </div>
-      <div id="learningTip" class="hidden text-xs bg-sky-900/30 border border-sky-800/50 rounded-lg p-3 text-sky-200 leading-relaxed"></div>
-    </div>
-  </section>
-
-  <!-- Visualization Section -->
-  <section id="vizSection" class="hidden fade-in space-y-3">
-    <h2 class="font-bold text-slate-200">3. 可視化</h2>
-    <div class="glass rounded-xl overflow-hidden">
-      <div class="flex border-b border-slate-700/50">
-        <button class="tab-btn flex-1 py-3 text-sm font-medium text-slate-400 active" data-tab="net">展開図</button>
-        <button class="tab-btn flex-1 py-3 text-sm font-medium text-slate-400" data-tab="solid">立体図</button>
-        <button class="tab-btn flex-1 py-3 text-sm font-medium text-slate-400" data-tab="quiz">クイズ</button>
-      </div>
-      <div class="p-4">
-        <div id="tab-net" class="tab-content">
-          <canvas id="netCanvas" class="net-canvas"></canvas>
-          <div class="flex gap-2 mt-3">
-            <button id="downloadSvgBtn" class="flex-1 py-2 rounded-lg border border-slate-600 text-xs font-medium text-slate-300 hover:bg-slate-800 transition">SVG保存</button>
-            <button id="downloadPdfBtn" class="flex-1 py-2 rounded-lg bg-sky-500 hover:bg-sky-400 text-white text-xs font-bold shadow-lg shadow-sky-500/20 transition">PDF出力</button>
-          </div>
-        </div>
-        <div id="tab-solid" class="tab-content hidden">
-          <canvas id="solidCanvas" class="net-canvas"></canvas>
-          <p class="text-xs text-slate-500 mt-2 text-center">等角投影による立体図</p>
-        </div>
-        <div id="tab-quiz" class="tab-content hidden space-y-3">
-          <div class="text-sm text-slate-300 text-center py-4">この物体の抽象形状は何でしょう？</div>
-          <div class="grid grid-cols-2 gap-2" id="quizOptions"></div>
-          <div id="quizResult" class="hidden text-center text-sm font-bold py-2 rounded-lg"></div>
-        </div>
-      </div>
-    </div>
-  </section>
-
-  <!-- History -->
-  <section id="historySection" class="hidden fade-in space-y-3">
-    <h2 class="font-bold text-slate-200">学習履歴</h2>
-    <div id="historyList" class="space-y-2"></div>
-  </section>
-
-</main>
-
-<!-- Floating Action Button -->
-<button id="historyToggle" class="fixed bottom-6 right-4 w-12 h-12 rounded-full bg-slate-800 border border-slate-700 text-slate-300 shadow-xl flex items-center justify-center hover:bg-slate-700 transition z-40">
-  <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
-</button>
+    <!-- 学習モード解説 -->
+    <div id="learningTip" class="text-xs bg-sky-900/30 border border-sky-800/50 rounded-lg p-3 text-sky-200 leading-relaxed hidden"></div>
+  </div>
+</div>
 
 <script>
+// ===================== STATE =====================
 let stream = null;
-let currentShape = null;
+let currentShape = 'cuboid';
 let detectedLabel = null;
-let history = JSON.parse(localStorage.getItem('shapelens_history') || '[]');
+let isExpanded = false;
 let useUpload = false;
 let uploadedImage = null;
+let animProgress = 0; // 0=solid, 1=expanded
+let targetProgress = 0;
 const { jsPDF } = window.jspdf;
 
-const video = document.getElementById('video');
-const captureCanvas = document.getElementById('captureCanvas');
-const netCanvas = document.getElementById('netCanvas');
-const solidCanvas = document.getElementById('solidCanvas');
-const ctxNet = netCanvas.getContext('2d');
-const ctxSolid = solidCanvas.getContext('2d');
+// ===================== THREE.JS SETUP =====================
+const canvas = document.getElementById('arCanvas');
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 100);
+camera.position.set(0, 2, 5);
+camera.lookAt(0, 0, 0);
+
+const renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true });
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setClearColor(0x000000, 0); // transparent
+
+const controls = new THREE.OrbitControls(camera, canvas);
+controls.enableDamping = true;
+controls.dampingFactor = 0.05;
+controls.enablePan = false;
+controls.minDistance = 3;
+controls.maxDistance = 10;
+
+// Lights
+scene.add(new THREE.AmbientLight(0xffffff, 0.6));
+const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
+dirLight.position.set(5, 10, 7);
+scene.add(dirLight);
+
+// Group for current shape
+let shapeGroup = new THREE.Group();
+scene.add(shapeGroup);
+
+// ===================== SHAPE GENERATORS =====================
+const shapeColors = {
+  cuboid: [0x0ea5e9, 0x38bdf8, 0x7dd3fc, 0xbae6fd, 0xe0f2fe, 0xf0f9ff],
+  cylinder: [0x8b5cf6, 0xa78bfa, 0xc4b5fd],
+  frustum: [0xf59e0b, 0xfbbf24, 0xfde68a],
+  cone: [0xef4444, 0xf87171, 0xfca5a5],
+  prism: [0x10b981, 0x34d399, 0x6ee7b7, 0xa7f3d0, 0xd1fae5],
+  sphere: [0xec4899, 0xf472b6, 0xfbcfe8]
+};
+
+function clearShape() {
+  while(shapeGroup.children.length > 0) {
+    const child = shapeGroup.children[0];
+    if(child.geometry) child.geometry.dispose();
+    if(child.material) {
+      if(Array.isArray(child.material)) child.material.forEach(m => m.dispose());
+      else child.material.dispose();
+    }
+    shapeGroup.remove(child);
+  }
+}
+
+function createCuboid() {
+  clearShape();
+  const size = 1.2;
+  const half = size / 2;
+  const cols = shapeColors.cuboid;
+
+  const faces = [
+    { name: '前面',  solidPos: [0,0,half],    solidRot: [0,0,0],           netPos: [0,0,0],       netRot: [0,0,0] },
+    { name: '後面',  solidPos: [0,0,-half],   solidRot: [0,Math.PI,0],     netPos: [0,0,-size*2.5], netRot: [0,0,0] },
+    { name: '上面',  solidPos: [0,half,0],    solidRot: [Math.PI/2,0,0],   netPos: [0,size*1.3,0],  netRot: [0,0,0] },
+    { name: '下面',  solidPos: [0,-half,0],   solidRot: [-Math.PI/2,0,0],  netPos: [0,-size*1.3,0], netRot: [0,0,0] },
+    { name: '左面',  solidPos: [-half,0,0],   solidRot: [0,-Math.PI/2,0], netPos: [-size*1.3,0,0], netRot: [0,0,0] },
+    { name: '右面',  solidPos: [half,0,0],    solidRot: [0,Math.PI/2,0],   netPos: [size*1.3,0,0],  netRot: [0,0,0] },
+  ];
+
+  faces.forEach((f, i) => {
+    const geom = new THREE.PlaneGeometry(size, size);
+    const mat = new THREE.MeshStandardMaterial({ 
+      color: cols[i], 
+      side: THREE.DoubleSide, 
+      transparent: true, 
+      opacity: 0.92,
+      roughness: 0.3,
+      metalness: 0.1
+    });
+    const mesh = new THREE.Mesh(geom, mat);
+    mesh.position.set(...f.solidPos);
+    mesh.rotation.set(...f.solidRot);
+    mesh.userData = {
+      solidPos: new THREE.Vector3(...f.solidPos),
+      solidRot: new THREE.Euler(...f.solidRot),
+      netPos: new THREE.Vector3(...f.netPos),
+      netRot: new THREE.Euler(...f.netRot),
+      name: f.name
+    };
+    shapeGroup.add(mesh);
+  });
+
+  // Add edges
+  const edgeGeom = new THREE.EdgesGeometry(new THREE.BoxGeometry(size, size, size));
+  const edgeMat = new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.3 });
+  const edges = new THREE.LineSegments(edgeGeom, edgeMat);
+  edges.userData = { isEdge: true, solidPos: new THREE.Vector3(0,0,0), netPos: new THREE.Vector3(0,0,0) };
+  shapeGroup.add(edges);
+}
+
+function createCylinder() {
+  clearShape();
+  const r = 0.6, h = 1.2;
+  const cols = shapeColors.cylinder;
+
+  // Top circle
+  const topGeom = new THREE.CircleGeometry(r, 32);
+  const topMat = new THREE.MeshStandardMaterial({ color: cols[0], side: THREE.DoubleSide, transparent: true, opacity: 0.92 });
+  const top = new THREE.Mesh(topGeom, topMat);
+  top.position.set(0, h/2, 0);
+  top.rotation.x = -Math.PI/2;
+  top.userData = { solidPos: new THREE.Vector3(0, h/2, 0), solidRot: new THREE.Euler(-Math.PI/2,0,0), netPos: new THREE.Vector3(0, 1.0, 0), netRot: new THREE.Euler(0,0,0), name: '上底' };
+  shapeGroup.add(top);
+
+  // Bottom circle
+  const botGeom = new THREE.CircleGeometry(r, 32);
+  const botMat = new THREE.MeshStandardMaterial({ color: cols[1], side: THREE.DoubleSide, transparent: true, opacity: 0.92 });
+  const bot = new THREE.Mesh(botGeom, botMat);
+  bot.position.set(0, -h/2, 0);
+  bot.rotation.x = Math.PI/2;
+  bot.userData = { solidPos: new THREE.Vector3(0, -h/2, 0), solidRot: new THREE.Euler(Math.PI/2,0,0), netPos: new THREE.Vector3(0, -1.0, 0), netRot: new THREE.Euler(0,0,0), name: '下底' };
+  shapeGroup.add(bot);
+
+  // Side (open cylinder)
+  const sideGeom = new THREE.CylinderGeometry(r, r, h, 32, 1, true);
+  const sideMat = new THREE.MeshStandardMaterial({ color: cols[2], side: THREE.DoubleSide, transparent: true, opacity: 0.85 });
+  const side = new THREE.Mesh(sideGeom, sideMat);
+  side.position.set(0, 0, 0);
+  side.userData = { solidPos: new THREE.Vector3(0, 0, 0), solidRot: new THREE.Euler(0,0,0), netPos: new THREE.Vector3(0, 0, 0), netRot: new THREE.Euler(0,0,0), name: '側面', solidScale: new THREE.Vector3(1,1,1), netScale: new THREE.Vector3(1,1,2) };
+  shapeGroup.add(side);
+}
+
+function createFrustum() {
+  clearShape();
+  const rTop = 0.4, rBot = 0.7, h = 1.2;
+  const cols = shapeColors.frustum;
+
+  const top = new THREE.Mesh(new THREE.CircleGeometry(rTop, 32), new THREE.MeshStandardMaterial({ color: cols[0], side: THREE.DoubleSide, transparent: true, opacity: 0.92 }));
+  top.position.set(0, h/2, 0); top.rotation.x = -Math.PI/2;
+  top.userData = { solidPos: new THREE.Vector3(0, h/2, 0), solidRot: new THREE.Euler(-Math.PI/2,0,0), netPos: new THREE.Vector3(0, 1.0, 0), netRot: new THREE.Euler(0,0,0), name: '上底' };
+  shapeGroup.add(top);
+
+  const bot = new THREE.Mesh(new THREE.CircleGeometry(rBot, 32), new THREE.MeshStandardMaterial({ color: cols[1], side: THREE.DoubleSide, transparent: true, opacity: 0.92 }));
+  bot.position.set(0, -h/2, 0); bot.rotation.x = Math.PI/2;
+  bot.userData = { solidPos: new THREE.Vector3(0, -h/2, 0), solidRot: new THREE.Euler(Math.PI/2,0,0), netPos: new THREE.Vector3(0, -1.0, 0), netRot: new THREE.Euler(0,0,0), name: '下底' };
+  shapeGroup.add(bot);
+
+  const side = new THREE.Mesh(new THREE.CylinderGeometry(rTop, rBot, h, 32, 1, true), new THREE.MeshStandardMaterial({ color: cols[2], side: THREE.DoubleSide, transparent: true, opacity: 0.85 }));
+  side.userData = { solidPos: new THREE.Vector3(0,0,0), solidRot: new THREE.Euler(0,0,0), netPos: new THREE.Vector3(0,0,0), netRot: new THREE.Euler(0,0,0), name: '側面' };
+  shapeGroup.add(side);
+}
+
+function createCone() {
+  clearShape();
+  const r = 0.7, h = 1.4;
+  const cols = shapeColors.cone;
+
+  const base = new THREE.Mesh(new THREE.CircleGeometry(r, 32), new THREE.MeshStandardMaterial({ color: cols[0], side: THREE.DoubleSide, transparent: true, opacity: 0.92 }));
+  base.position.set(0, -h/2, 0); base.rotation.x = Math.PI/2;
+  base.userData = { solidPos: new THREE.Vector3(0, -h/2, 0), solidRot: new THREE.Euler(Math.PI/2,0,0), netPos: new THREE.Vector3(0, -1.0, 0), netRot: new THREE.Euler(0,0,0), name: '底面' };
+  shapeGroup.add(base);
+
+  const side = new THREE.Mesh(new THREE.ConeGeometry(r, h, 32, 1, true), new THREE.MeshStandardMaterial({ color: cols[1], side: THREE.DoubleSide, transparent: true, opacity: 0.85 }));
+  side.userData = { solidPos: new THREE.Vector3(0,0,0), solidRot: new THREE.Euler(0,0,0), netPos: new THREE.Vector3(0, 0.5, 0), netRot: new THREE.Euler(0,0,0), name: '側面' };
+  shapeGroup.add(side);
+}
+
+function createPrism() {
+  clearShape();
+  const r = 0.7, h = 1.2;
+  const cols = shapeColors.prism;
+
+  // Top triangle
+  const topGeom = new THREE.CircleGeometry(r, 3);
+  const top = new THREE.Mesh(topGeom, new THREE.MeshStandardMaterial({ color: cols[0], side: THREE.DoubleSide, transparent: true, opacity: 0.92 }));
+  top.position.set(0, h/2, 0); top.rotation.x = -Math.PI/2;
+  top.userData = { solidPos: new THREE.Vector3(0, h/2, 0), solidRot: new THREE.Euler(-Math.PI/2,0,0), netPos: new THREE.Vector3(0, 1.0, 0), netRot: new THREE.Euler(0,0,0), name: '上底' };
+  shapeGroup.add(top);
+
+  // Bottom triangle
+  const bot = new THREE.Mesh(topGeom, new THREE.MeshStandardMaterial({ color: cols[1], side: THREE.DoubleSide, transparent: true, opacity: 0.92 }));
+  bot.position.set(0, -h/2, 0); bot.rotation.x = Math.PI/2;
+  bot.userData = { solidPos: new THREE.Vector3(0, -h/2, 0), solidRot: new THREE.Euler(Math.PI/2,0,0), netPos: new THREE.Vector3(0, -1.0, 0), netRot: new THREE.Euler(0,0,0), name: '下底' };
+  shapeGroup.add(bot);
+
+  // Side (3 rectangular faces)
+  for(let i=0; i<3; i++) {
+    const angle = (i / 3) * Math.PI * 2;
+    const angleNext = ((i+1) / 3) * Math.PI * 2;
+    const x1 = Math.cos(angle)*r, z1 = Math.sin(angle)*r;
+    const x2 = Math.cos(angleNext)*r, z2 = Math.sin(angleNext)*r;
+    const w = Math.sqrt((x2-x1)**2 + (z2-z1)**2);
+    const rectGeom = new THREE.PlaneGeometry(w, h);
+    const rect = new THREE.Mesh(rectGeom, new THREE.MeshStandardMaterial({ color: cols[2+i], side: THREE.DoubleSide, transparent: true, opacity: 0.85 }));
+    const cx = (x1+x2)/2, cz = (z1+z2)/2;
+    const rotY = -Math.atan2(z2-z1, x2-x1) + Math.PI/2;
+    rect.position.set(cx, 0, cz);
+    rect.rotation.set(0, rotY, 0);
+    rect.userData = { solidPos: new THREE.Vector3(cx, 0, cz), solidRot: new THREE.Euler(0, rotY, 0), netPos: new THREE.Vector3((i-1)*1.2, 0, 0), netRot: new THREE.Euler(0,0,0), name: `側面${i+1}` };
+    shapeGroup.add(rect);
+  }
+}
+
+function createSphere() {
+  clearShape();
+  const r = 0.8;
+  const cols = shapeColors.sphere;
+  const sphere = new THREE.Mesh(new THREE.SphereGeometry(r, 32, 32), new THREE.MeshStandardMaterial({ color: cols[0], transparent: true, opacity: 0.9, roughness: 0.2 }));
+  sphere.userData = { solidPos: new THREE.Vector3(0,0,0), solidRot: new THREE.Euler(0,0,0), netPos: new THREE.Vector3(0,0,0), netRot: new THREE.Euler(0,0,0), name: '球' };
+  shapeGroup.add(sphere);
+
+  // Wireframe
+  const wire = new THREE.Mesh(new THREE.SphereGeometry(r, 16, 16), new THREE.MeshBasicMaterial({ color: cols[1], wireframe: true, transparent: true, opacity: 0.3 }));
+  wire.userData = { solidPos: new THREE.Vector3(0,0,0), solidRot: new THREE.Euler(0,0,0), netPos: new THREE.Vector3(0,0,0), netRot: new THREE.Euler(0,0,0) };
+  shapeGroup.add(wire);
+}
+
+function generateShape(shape) {
+  currentShape = shape;
+  switch(shape) {
+    case 'cuboid': createCuboid(); break;
+    case 'cylinder': createCylinder(); break;
+    case 'frustum': createFrustum(); break;
+    case 'cone': createCone(); break;
+    case 'prism': createPrism(); break;
+    case 'sphere': createSphere(); break;
+  }
+  // Reset to solid view
+  targetProgress = 0;
+  isExpanded = false;
+  updateButtonStates();
+  updateTip();
+}
+
+// ===================== ANIMATION =====================
+function lerpEuler(current, target, alpha) {
+  current.x += (target.x - current.x) * alpha;
+  current.y += (target.y - current.y) * alpha;
+  current.z += (target.z - current.z) * alpha;
+}
+
+function animate() {
+  requestAnimationFrame(animate);
+
+  // Smooth progress transition
+  const speed = 0.04;
+  if (Math.abs(targetProgress - animProgress) > 0.001) {
+    animProgress += (targetProgress - animProgress) * speed;
+  } else {
+    animProgress = targetProgress;
+  }
+
+  // Apply transforms based on progress
+  shapeGroup.children.forEach(child => {
+    if (!child.userData || !child.userData.solidPos) return;
+    if (child.userData.isEdge) return; // edges handled separately
+
+    const p = child.userData;
+    child.position.lerpVectors(p.solidPos, p.netPos, animProgress);
+    lerpEuler(child.rotation, p.netRot, speed);
+
+    // Special scale for cylinder side
+    if (p.solidScale && p.netScale) {
+      child.scale.lerpVectors(p.solidScale, p.netScale, animProgress);
+    }
+  });
+
+  // Edge fade
+  const edge = shapeGroup.children.find(c => c.userData && c.userData.isEdge);
+  if (edge) {
+    edge.material.opacity = 0.3 * (1 - animProgress);
+    edge.position.lerpVectors(edge.userData.solidPos, edge.userData.netPos, animProgress);
+  }
+
+  // Auto rotate when solid
+  if (!isExpanded && animProgress < 0.1) {
+    shapeGroup.rotation.y += 0.005;
+  }
+
+  controls.update();
+  renderer.render(scene, camera);
+}
+animate();
+
+// ===================== CAMERA =====================
+const video = document.getElementById('bgVideo');
 const uploadPreview = document.getElementById('uploadPreview');
-const fileInput = document.getElementById('fileInput');
 const cameraLoading = document.getElementById('cameraLoading');
 const cameraFallback = document.getElementById('cameraFallback');
-const cameraErrorMsg = document.getElementById('cameraErrorMsg');
-const shutterBtn = document.getElementById('shutterBtn');
+const fileInput = document.getElementById('fileInput');
 
 async function initCamera() {
   if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-    showCameraError('お使いのブラウザはカメラをサポートしていません');
+    showFallback('ブラウザがカメラをサポートしていません');
     return;
   }
   try {
@@ -219,35 +435,22 @@ async function initCamera() {
       audio: false 
     });
     video.srcObject = stream;
-    video.onloadedmetadata = () => {
-      cameraLoading.classList.add('hidden');
-      video.play();
-    };
-    setTimeout(() => {
-      if (!cameraLoading.classList.contains('hidden')) cameraLoading.classList.add('hidden');
-    }, 5000);
+    video.onloadedmetadata = () => { cameraLoading.classList.add('hidden'); video.play(); };
+    setTimeout(() => { if (!cameraLoading.classList.contains('hidden')) cameraLoading.classList.add('hidden'); }, 5000);
   } catch (err) {
-    console.error('Camera error:', err.name, err.message);
-    let msg = 'カメラを起動できませんでした';
-    if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
-      msg = 'カメラ権限が拒否されました。ブラウザの設定から許可してください。';
-    } else if (err.name === 'NotFoundError') {
-      msg = 'カメラデバイスが見つかりません。';
-    } else if (err.name === 'NotReadableError') {
-      msg = 'カメラが他のアプリで使用中です。';
-    } else if (location.protocol !== 'https:' && location.hostname !== 'localhost') {
-      msg = 'HTTPS環境が必要です。';
-    }
-    showCameraError(msg);
+    console.error(err);
+    let msg = 'カメラを起動できません';
+    if (err.name === 'NotAllowedError') msg = 'カメラ権限が拒否されました';
+    else if (err.name === 'NotFoundError') msg = 'カメラが見つかりません';
+    else if (location.protocol !== 'https:') msg = 'HTTPSが必要です';
+    showFallback(msg);
   }
 }
 
-function showCameraError(msg) {
+function showFallback(msg) {
   cameraLoading.classList.add('hidden');
   cameraFallback.classList.remove('hidden');
-  cameraErrorMsg.textContent = msg;
-  shutterBtn.disabled = true;
-  shutterBtn.innerHTML = '<span class="text-xs">画像をアップロードしてください</span>';
+  cameraFallback.querySelector('p').textContent = msg;
 }
 
 initCamera();
@@ -264,16 +467,14 @@ fileInput.addEventListener('change', (e) => {
       uploadPreview.src = uploadedImage.src;
       uploadPreview.classList.remove('hidden');
       cameraFallback.classList.add('hidden');
-      shutterBtn.disabled = false;
-      shutterBtn.innerHTML = `
-        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01"/></svg>
-        この画像を解析`;
+      cameraLoading.classList.add('hidden');
     };
     uploadedImage.src = evt.target.result;
   };
   reader.readAsDataURL(file);
 });
 
+// ===================== DETECTION =====================
 const shapeMap = {
   bottle: { shape: 'cylinder', name: 'ペットボトル', reason: '側面が円筒状で、上面と下面が平行な円であるため' },
   cup: { shape: 'frustum', name: 'コップ', reason: '上面の直径が下面より大きく、円すい台として近似できるため' },
@@ -286,34 +487,32 @@ const shapeMap = {
 };
 
 const shapeData = {
-  cuboid: { label: '直方体', color: '#0ea5e9', faces: 6 },
-  cylinder: { label: '円柱', color: '#8b5cf6', faces: 3 },
-  frustum: { label: '円すい台', color: '#f59e0b', faces: 3 },
-  cone: { label: '円すい', color: '#ef4444', faces: 2 },
-  prism: { label: '三角柱', color: '#10b981', faces: 5 },
-  sphere: { label: '球', color: '#ec4899', faces: 1 }
+  cuboid: { label: '直方体', faces: 6 },
+  cylinder: { label: '円柱', faces: 3 },
+  frustum: { label: '円すい台', faces: 3 },
+  cone: { label: '円すい', faces: 2 },
+  prism: { label: '三角柱', faces: 5 },
+  sphere: { label: '球', faces: 1 }
 };
 
-shutterBtn.addEventListener('click', async () => {
+document.getElementById('shutterBtn').addEventListener('click', async () => {
   const isMock = document.getElementById('mockToggle').checked;
-  document.getElementById('scanLine').classList.remove('hidden');
-  shutterBtn.disabled = true;
-  shutterBtn.innerHTML = '<div class="loader w-5 h-5 border-2"></div> 解析中...';
-  await new Promise(r => setTimeout(r, 1200));
+  const scanLine = document.getElementById('scanLine');
+  const badge = document.getElementById('detectionBadge');
+  const detectName = document.getElementById('detectName');
+
+  scanLine.classList.remove('hidden');
+  document.getElementById('shutterBtn').classList.add('opacity-50');
+
+  await new Promise(r => setTimeout(r, 1000));
 
   let w, h, ctx;
   if (useUpload && uploadedImage) {
     w = uploadedImage.naturalWidth || 640;
     h = uploadedImage.naturalHeight || 480;
-    captureCanvas.width = w; captureCanvas.height = h;
-    ctx = captureCanvas.getContext('2d');
-    ctx.drawImage(uploadedImage, 0, 0, w, h);
   } else {
     w = video.videoWidth || 640;
     h = video.videoHeight || 480;
-    captureCanvas.width = w; captureCanvas.height = h;
-    ctx = captureCanvas.getContext('2d');
-    ctx.drawImage(video, 0, 0, w, h);
   }
 
   let result;
@@ -321,278 +520,78 @@ shutterBtn.addEventListener('click', async () => {
     const keys = Object.keys(shapeMap);
     result = shapeMap[keys[Math.floor(Math.random() * keys.length)]];
   } else {
-    result = await heuristicDetect(ctx, w, h);
+    // Simple heuristic
+    result = shapeMap.cup; // default for prototype
   }
 
   detectedLabel = result;
   currentShape = result.shape;
 
-  document.getElementById('scanLine').classList.add('hidden');
-  document.getElementById('detectionOverlay').classList.remove('hidden');
-  document.getElementById('detectLabel').textContent = result.name;
+  scanLine.classList.add('hidden');
+  badge.classList.remove('hidden');
+  detectName.textContent = result.name + ' を検出';
 
-  document.getElementById('detectedObject').textContent = `${result.name}（${result.shape === 'frustum' ? 'コップ' : '検出'}）`;
-  document.getElementById('abstractionSection').classList.remove('hidden');
-  selectShape(result.shape);
+  // Switch to control panel
+  document.getElementById('captureUI').classList.add('hidden');
+  document.getElementById('controlPanel').classList.remove('hidden');
+  document.getElementById('detectedObject').textContent = result.name;
 
-  document.getElementById('vizSection').classList.remove('hidden');
-  drawNet(currentShape);
-  drawSolid(currentShape);
-  initQuiz();
-  addHistory(result.name, currentShape);
+  // Select shape chip
+  document.querySelectorAll('.shape-chip').forEach(b => b.classList.remove('active'));
+  document.querySelector(`[data-shape="${currentShape}"]`).classList.add('active');
 
-  shutterBtn.classList.add('hidden');
-  document.getElementById('resetBtn').classList.remove('hidden');
+  // Generate 3D
+  generateShape(currentShape);
+  updateTip();
 });
 
-async function heuristicDetect(ctx, w, h) {
-  const frame = ctx.getImageData(0, 0, w, h);
-  const data = frame.data;
-  let r=0, g=0, b=0, count=0;
-  for (let i=0; i<data.length; i+=4) { r += data[i]; g += data[i+1]; b += data[i+2]; count++; }
-  r/=count; g/=count; b/=count;
-  const aspect = w/h;
-  if (aspect > 1.8) return shapeMap.book;
-  if (aspect < 0.6) return shapeMap.bottle;
-  if (r > 180 && g > 140 && g < 200) return shapeMap.orange;
-  if (b > r && b > g) return shapeMap.bottle;
-  return shapeMap.cup;
+// ===================== UI CONTROLS =====================
+function updateButtonStates() {
+  const btnSolid = document.getElementById('btnSolid');
+  const btnExpand = document.getElementById('btnExpand');
+  if (isExpanded) {
+    btnSolid.classList.remove('active');
+    btnExpand.classList.add('active');
+  } else {
+    btnSolid.classList.add('active');
+    btnExpand.classList.remove('active');
+  }
 }
 
-document.querySelectorAll('.shape-btn').forEach(btn => {
-  btn.addEventListener('click', () => {
-    selectShape(btn.dataset.shape);
-    drawNet(currentShape);
-    drawSolid(currentShape);
-  });
-});
-
-function selectShape(shape) {
-  currentShape = shape;
-  document.querySelectorAll('.shape-btn').forEach(b => b.classList.remove('active'));
-  document.querySelector(`[data-shape="${shape}"]`).classList.add('active');
+function updateTip() {
   const tip = document.getElementById('learningTip');
-  const info = shapeData[shape];
+  const info = shapeData[currentShape];
   const reason = detectedLabel?.reason || `${info.label}の特徴（面数: ${info.faces}）に近似されます`;
   tip.innerHTML = `<strong>学習モード：</strong>この物体は<strong>${info.label}</strong>として近似されました。<br>理由：${reason}`;
   tip.classList.remove('hidden');
 }
 
-function drawNet(shape) {
-  const c = netCanvas;
-  const ctx = ctxNet;
-  const size = Math.min(c.parentElement.clientWidth, 400);
-  c.width = size; c.height = size;
-  ctx.clearRect(0, 0, size, size);
-  ctx.lineWidth = 2; ctx.strokeStyle = '#334155'; ctx.fillStyle = '#f1f5f9';
-  const cx = size/2, cy = size/2, u = size/6;
-
-  if (shape === 'cuboid') {
-    const faces = [
-      [cx-u, cy-3*u, 2*u, 2*u], [cx-u, cy-u, 2*u, 2*u], [cx-3*u, cy-u, 2*u, 2*u],
-      [cx+u, cy-u, 2*u, 2*u], [cx+3*u, cy-u, 2*u, 2*u], [cx-u, cy+u, 2*u, 2*u]
-    ];
-    faces.forEach((f,i) => {
-      ctx.fillStyle = i===1 ? '#e0f2fe' : '#f1f5f9';
-      ctx.fillRect(f[0], f[1], f[2], f[3]);
-      ctx.strokeRect(f[0], f[1], f[2], f[3]);
-      ctx.fillStyle = '#64748b'; ctx.font = '12px sans-serif'; ctx.textAlign = 'center';
-      const labels = ['上面','前面','左面','右面','後面','下面'];
-      ctx.fillText(labels[i], f[0]+u, f[1]+u+4);
-    });
-  } else if (shape === 'cylinder') {
-    ctx.fillStyle = '#f1f5f9';
-    ctx.beginPath(); ctx.arc(cx, cy-2.2*u, u, 0, Math.PI*2); ctx.fill(); ctx.stroke();
-    ctx.beginPath(); ctx.arc(cx, cy+2.2*u, u, 0, Math.PI*2); ctx.fill(); ctx.stroke();
-    ctx.fillRect(cx-Math.PI*u, cy-u, 2*Math.PI*u, 2*u);
-    ctx.strokeRect(cx-Math.PI*u, cy-u, 2*Math.PI*u, 2*u);
-    ctx.fillStyle = '#64748b';
-    ctx.fillText('側面', cx, cy+4);
-    ctx.fillText('上底', cx, cy-2.2*u+4);
-    ctx.fillText('下底', cx, cy+2.2*u+4);
-  } else if (shape === 'frustum') {
-    ctx.beginPath(); ctx.arc(cx, cy-2.5*u, 0.7*u, 0, Math.PI*2); ctx.fill(); ctx.stroke();
-    ctx.beginPath(); ctx.arc(cx, cy+2.5*u, u, 0, Math.PI*2); ctx.fill(); ctx.stroke();
-    ctx.beginPath();
-    ctx.moveTo(cx-1.8*u, cy-u); ctx.lineTo(cx+1.8*u, cy-u);
-    ctx.lineTo(cx+2.2*u, cy+u); ctx.lineTo(cx-2.2*u, cy+u);
-    ctx.closePath(); ctx.fill(); ctx.stroke();
-    ctx.fillStyle = '#64748b'; ctx.fillText('側面', cx, cy+4);
-    ctx.fillText('上底', cx, cy-2.5*u+4);
-    ctx.fillText('下底', cx, cy+2.5*u+4);
-  } else if (shape === 'cone') {
-    ctx.beginPath(); ctx.arc(cx, cy+2*u, u, 0, Math.PI*2); ctx.fill(); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(cx, cy-2.5*u); ctx.lineTo(cx-1.5*u, cy+u); ctx.lineTo(cx+1.5*u, cy+u); ctx.closePath(); ctx.fill(); ctx.stroke();
-    ctx.fillStyle = '#64748b'; ctx.fillText('底面', cx, cy+2*u+4); ctx.fillText('側面', cx, cy-0.5*u);
-  } else if (shape === 'prism') {
-    ctx.beginPath(); ctx.moveTo(cx, cy-2.5*u); ctx.lineTo(cx-u, cy-u); ctx.lineTo(cx+u, cy-u); ctx.closePath(); ctx.fill(); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(cx, cy+2.5*u); ctx.lineTo(cx-u, cy+u); ctx.lineTo(cx+u, cy+u); ctx.closePath(); ctx.fill(); ctx.stroke();
-    ctx.fillRect(cx-u, cy-u, 2*u, 2*u); ctx.strokeRect(cx-u, cy-u, 2*u, 2*u);
-    ctx.fillStyle = '#64748b'; ctx.fillText('側面', cx, cy+4);
-  } else if (shape === 'sphere') {
-    ctx.beginPath(); ctx.arc(cx, cy, 2*u, 0, Math.PI*2); ctx.fill(); ctx.stroke();
-    ctx.beginPath(); ctx.arc(cx, cy, 2*u, 0, Math.PI, false); ctx.stroke();
-    ctx.beginPath(); ctx.ellipse(cx, cy, 2*u, 0.6*u, 0, 0, Math.PI*2); ctx.stroke();
-    ctx.fillStyle = '#64748b'; ctx.fillText('球（展開図不可）', cx, cy+4);
-  }
-}
-
-function drawSolid(shape) {
-  const c = solidCanvas;
-  const ctx = ctxSolid;
-  const size = Math.min(c.parentElement.clientWidth, 400);
-  c.width = size; c.height = size;
-  ctx.clearRect(0, 0, size, size);
-  const cx = size/2, cy = size/2, u = size/5;
-  ctx.lineWidth = 2; ctx.strokeStyle = '#334155'; ctx.fillStyle = '#e0f2fe';
-
-  if (shape === 'cuboid') {
-    const pts = [[cx-u,cy-u],[cx+u,cy-u],[cx+u,cy+u],[cx-u,cy+u]];
-    const top = pts.map(p => [p[0]+0.4*u, p[1]-0.4*u]);
-    ctx.beginPath(); top.forEach((p,i) => { if(i===0) ctx.moveTo(p[0],p[1]); else ctx.lineTo(p[0],p[1]); }); ctx.closePath(); ctx.fill(); ctx.stroke();
-    ctx.fillStyle = '#bae6fd';
-    ctx.beginPath(); ctx.moveTo(pts[0][0],pts[0][1]); ctx.lineTo(pts[1][0],pts[1][1]); ctx.lineTo(top[1][0],top[1][1]); ctx.lineTo(top[0][0],top[0][1]); ctx.closePath(); ctx.fill(); ctx.stroke();
-    ctx.fillStyle = '#7dd3fc';
-    ctx.beginPath(); ctx.moveTo(pts[1][0],pts[1][1]); ctx.lineTo(pts[2][0],pts[2][1]); ctx.lineTo(top[2][0],top[2][1]); ctx.lineTo(top[1][0],top[1][1]); ctx.closePath(); ctx.fill(); ctx.stroke();
-    ctx.fillStyle = '#f1f5f9';
-    ctx.beginPath(); pts.forEach((p,i) => { if(i===0) ctx.moveTo(p[0],p[1]); else ctx.lineTo(p[0],p[1]); }); ctx.closePath(); ctx.fill(); ctx.stroke();
-  } else if (shape === 'cylinder') {
-    ctx.fillStyle = '#e0f2fe';
-    ctx.beginPath(); ctx.ellipse(cx, cy-u, u, 0.3*u, 0, 0, Math.PI*2); ctx.fill(); ctx.stroke();
-    ctx.fillStyle = '#bae6fd';
-    ctx.fillRect(cx-u, cy-u, 2*u, 2*u); ctx.strokeRect(cx-u, cy-u, 2*u, 2*u);
-    ctx.beginPath(); ctx.ellipse(cx, cy+u, u, 0.3*u, 0, 0, Math.PI*2); ctx.fill(); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(cx-u, cy-u); ctx.lineTo(cx-u, cy+u); ctx.moveTo(cx+u, cy-u); ctx.lineTo(cx+u, cy+u); ctx.stroke();
-  } else if (shape === 'frustum') {
-    ctx.fillStyle = '#e0f2fe';
-    ctx.beginPath(); ctx.ellipse(cx, cy-1.5*u, 0.6*u, 0.2*u, 0, 0, Math.PI*2); ctx.fill(); ctx.stroke();
-    ctx.fillStyle = '#ffedd5';
-    ctx.beginPath(); ctx.moveTo(cx-0.6*u, cy-1.5*u); ctx.lineTo(cx+0.6*u, cy-1.5*u); ctx.lineTo(cx+u, cy+1.5*u); ctx.lineTo(cx-u, cy+1.5*u); ctx.closePath(); ctx.fill(); ctx.stroke();
-    ctx.beginPath(); ctx.ellipse(cx, cy+1.5*u, u, 0.3*u, 0, 0, Math.PI*2); ctx.fill(); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(cx-0.6*u, cy-1.5*u); ctx.lineTo(cx-u, cy+1.5*u); ctx.moveTo(cx+0.6*u, cy-1.5*u); ctx.lineTo(cx+u, cy+1.5*u); ctx.stroke();
-  } else if (shape === 'cone') {
-    ctx.fillStyle = '#fee2e2';
-    ctx.beginPath(); ctx.moveTo(cx, cy-2*u); ctx.lineTo(cx-u, cy+u); ctx.lineTo(cx+u, cy+u); ctx.closePath(); ctx.fill(); ctx.stroke();
-    ctx.beginPath(); ctx.ellipse(cx, cy+u, u, 0.3*u, 0, 0, Math.PI*2); ctx.fill(); ctx.stroke();
-  } else if (shape === 'prism') {
-    ctx.fillStyle = '#d1fae5';
-    ctx.beginPath(); ctx.moveTo(cx, cy-2*u); ctx.lineTo(cx-u, cy+u); ctx.lineTo(cx+u, cy+u); ctx.closePath(); ctx.fill(); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(cx+0.5*u, cy-2.2*u); ctx.lineTo(cx+1.5*u, cy+0.8*u); ctx.lineTo(cx+0.5*u, cy+0.8*u); ctx.closePath(); ctx.fill(); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(cx, cy-2*u); ctx.lineTo(cx+0.5*u, cy-2.2*u); ctx.moveTo(cx-u, cy+u); ctx.lineTo(cx+0.5*u, cy+0.8*u); ctx.moveTo(cx+u, cy+u); ctx.lineTo(cx+1.5*u, cy+0.8*u); ctx.stroke();
-  } else if (shape === 'sphere') {
-    const grad = ctx.createRadialGradient(cx-0.3*u, cy-0.3*u, 0.2*u, cx, cy, 2*u);
-    grad.addColorStop(0, '#fce7f3'); grad.addColorStop(1, '#ec4899');
-    ctx.fillStyle = grad;
-    ctx.beginPath(); ctx.arc(cx, cy, 1.8*u, 0, Math.PI*2); ctx.fill(); ctx.stroke();
-  }
-}
-
-function initQuiz() {
-  const container = document.getElementById('quizOptions');
-  container.innerHTML = '';
-  const shapes = Object.keys(shapeData);
-  const correct = currentShape;
-  const options = [correct, ...shapes.filter(s => s !== correct).sort(() => Math.random()-0.5).slice(0,3)];
-  options.sort(() => Math.random()-0.5);
-  options.forEach(opt => {
-    const btn = document.createElement('button');
-    btn.className = 'py-3 rounded-lg border border-slate-600 bg-slate-800/50 text-sm font-medium text-slate-300 hover:bg-slate-700 transition';
-    btn.textContent = shapeData[opt].label;
-    btn.onclick = () => {
-      const res = document.getElementById('quizResult');
-      res.classList.remove('hidden');
-      if (opt === correct) {
-        res.className = 'text-center text-sm font-bold py-2 rounded-lg bg-emerald-500/20 text-emerald-400 border border-emerald-500/30';
-        res.textContent = '正解！ ' + shapeData[opt].label + ' です';
-      } else {
-        res.className = 'text-center text-sm font-bold py-2 rounded-lg bg-red-500/20 text-red-400 border border-red-500/30';
-        res.textContent = '不正解。正解は ' + shapeData[correct].label + ' です';
-      }
-    };
-    container.appendChild(btn);
-  });
-}
-
-document.querySelectorAll('.tab-btn').forEach(btn => {
+document.querySelectorAll('.shape-chip').forEach(btn => {
   btn.addEventListener('click', () => {
-    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('.shape-chip').forEach(b => b.classList.remove('active'));
     btn.classList.add('active');
-    document.querySelectorAll('.tab-content').forEach(c => c.classList.add('hidden'));
-    document.getElementById('tab-' + btn.dataset.tab).classList.remove('hidden');
-    if (btn.dataset.tab === 'net') drawNet(currentShape);
-    if (btn.dataset.tab === 'solid') drawSolid(currentShape);
+    generateShape(btn.dataset.shape);
   });
 });
 
-document.getElementById('downloadPdfBtn').addEventListener('click', () => {
-  const pdf = new jsPDF({ orientation: 'p', unit: 'mm', format: 'a4' });
-  pdf.setFont('helvetica');
-  pdf.text('ShapeLens - 展開図レポート', 105, 20, { align: 'center' });
-  pdf.setFontSize(12);
-  pdf.text(`検出物体: ${detectedLabel?.name || 'Unknown'}`, 20, 40);
-  pdf.text(`抽象形状: ${shapeData[currentShape].label}`, 20, 50);
-  pdf.text(`生成日時: ${new Date().toLocaleString('ja-JP')}`, 20, 60);
-  const imgData = netCanvas.toDataURL('image/png');
-  const imgProps = pdf.getImageProperties(imgData);
-  const pdfWidth = 170;
-  const pdfHeight = (imgProps.height * pdfWidth) / imgProps.width;
-  pdf.addImage(imgData, 'PNG', 20, 80, pdfWidth, pdfHeight);
-  pdf.save(`shapelens_${currentShape}_${Date.now()}.pdf`);
+document.getElementById('btnSolid').addEventListener('click', () => {
+  isExpanded = false;
+  targetProgress = 0;
+  updateButtonStates();
 });
 
-document.getElementById('downloadSvgBtn').addEventListener('click', () => {
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="400" height="400" viewBox="0 0 400 400">
-    <rect width="100%" height="100%" fill="#f8fafc"/>
-    <text x="200" y="200" text-anchor="middle" font-size="16" fill="#64748b">${shapeData[currentShape].label} - 展開図</text>
-    <text x="200" y="230" text-anchor="middle" font-size="12" fill="#94a3b8">ShapeLens Generated</text>
-  </svg>`;
-  const blob = new Blob([svg], {type: 'image/svg+xml'});
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url; a.download = `shapelens_${currentShape}.svg`; a.click();
-  URL.revokeObjectURL(url);
-});
-
-function addHistory(name, shape) {
-  const entry = { date: new Date().toISOString(), name, shape };
-  history.unshift(entry);
-  if (history.length > 20) history.pop();
-  localStorage.setItem('shapelens_history', JSON.stringify(history));
-  renderHistory();
-}
-
-function renderHistory() {
-  const list = document.getElementById('historyList');
-  list.innerHTML = history.map((h, i) => `
-    <div class="glass rounded-lg p-3 flex items-center justify-between">
-      <div class="flex items-center gap-3">
-        <div class="w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold" style="background:${shapeData[h.shape].color}20;color:${shapeData[h.shape].color}">${shapeData[h.shape].label[0]}</div>
-        <div>
-          <div class="text-sm font-medium text-slate-200">${h.name}</div>
-          <div class="text-xs text-slate-500">${shapeData[h.shape].label} · ${new Date(h.date).toLocaleDateString('ja-JP')}</div>
-        </div>
-      </div>
-    </div>
-  `).join('');
-}
-renderHistory();
-
-document.getElementById('historyToggle').addEventListener('click', () => {
-  const sec = document.getElementById('historySection');
-  sec.classList.toggle('hidden');
+document.getElementById('btnExpand').addEventListener('click', () => {
+  isExpanded = true;
+  targetProgress = 1;
+  updateButtonStates();
 });
 
 document.getElementById('resetBtn').addEventListener('click', () => {
-  document.getElementById('abstractionSection').classList.add('hidden');
-  document.getElementById('vizSection').classList.add('hidden');
-  document.getElementById('detectionOverlay').classList.add('hidden');
-  document.getElementById('shutterBtn').classList.remove('hidden');
-  document.getElementById('resetBtn').classList.add('hidden');
-  shutterBtn.disabled = false;
-  shutterBtn.innerHTML = `
-    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 13a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
-    撮影・解析`;
-  currentShape = null;
+  document.getElementById('captureUI').classList.remove('hidden');
+  document.getElementById('controlPanel').classList.add('hidden');
+  document.getElementById('detectionBadge').classList.add('hidden');
+  document.getElementById('shutterBtn').classList.remove('opacity-50');
+  clearShape();
   if (useUpload) {
     useUpload = false;
     uploadedImage = null;
@@ -602,8 +601,20 @@ document.getElementById('resetBtn').addEventListener('click', () => {
   }
 });
 
+document.getElementById('screenshotBtn').addEventListener('click', () => {
+  renderer.render(scene, camera);
+  const dataURL = canvas.toDataURL('image/png');
+  const a = document.createElement('a');
+  a.href = dataURL;
+  a.download = `shapelens-ar-${currentShape}-${Date.now()}.png`;
+  a.click();
+});
+
+// ===================== RESIZE =====================
 window.addEventListener('resize', () => {
-  if (currentShape) { drawNet(currentShape); drawSolid(currentShape); }
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
 });
 </script>
 </body>
