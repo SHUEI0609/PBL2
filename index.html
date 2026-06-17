@@ -11,9 +11,23 @@
   @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;700&display=swap');
   body { font-family: 'Noto Sans JP', sans-serif; background: #0f172a; color: #e2e8f0; overflow-x: hidden; -webkit-tap-highlight-color: transparent; }
   .glass { background: rgba(30,41,59,0.7); backdrop-filter: blur(12px); border: 1px solid rgba(148,163,184,0.1); }
-  .camera-container { position: relative; width: 100%; aspect-ratio: 4/3; background: #020617; border-radius: 1rem; overflow: hidden; }
-  video, #captureCanvas { width: 100%; height: 100%; object-fit: cover; display: block; }
-  .overlay { position: absolute; inset: 0; pointer-events: none; }
+  .camera-container { 
+    position: relative; 
+    width: 100%; 
+    aspect-ratio: 4/3; 
+    background: #000; 
+    border-radius: 1rem; 
+    overflow: hidden; 
+  }
+  /* 絶対配置で確実に埋める */
+  .camera-fill {
+    position: absolute;
+    top: 0; left: 0;
+    width: 100%; height: 100%;
+    object-fit: cover;
+    display: block;
+  }
+  .overlay { position: absolute; inset: 0; pointer-events: none; z-index: 5; }
   .scan-line { position: absolute; width: 100%; height: 2px; background: linear-gradient(90deg, transparent, #38bdf8, transparent); animation: scan 2.5s linear infinite; opacity: 0.6; }
   @keyframes scan { 0% { top: 10%; } 50% { top: 90%; } 100% { top: 10%; } }
   .shape-btn { transition: all 0.2s; }
@@ -27,8 +41,8 @@
   .loader { border: 3px solid rgba(56,189,248,0.2); border-top-color: #38bdf8; border-radius: 50%; width: 40px; height: 40px; animation: spin 1s linear infinite; }
   @keyframes spin { to { transform: rotate(360deg); } }
   .ar-badge { position: absolute; background: rgba(15,23,42,0.8); color: #38bdf8; padding: 4px 10px; border-radius: 999px; font-size: 0.75rem; font-weight: 700; border: 1px solid rgba(56,189,248,0.3); }
-  #uploadPreview { width: 100%; height: 100%; object-fit: cover; }
 </style>
+<base target="_blank">
 </head>
 <body class="min-h-screen pb-24">
 
@@ -53,15 +67,15 @@
       </label>
     </div>
 
-    <div class="camera-container shadow-2xl shadow-sky-900/20 relative">
-      <!-- 実際のカメラ映像 -->
-      <video id="video" autoplay playsinline muted webkit-playsinline></video>
+    <div class="camera-container shadow-2xl shadow-sky-900/20">
+      <!-- カメラ映像：絶対配置で完全に埋める -->
+      <video id="video" class="camera-fill" autoplay playsinline muted webkit-playsinline></video>
 
-      <!-- アップロード画像プレビュー -->
-      <img id="uploadPreview" class="hidden" alt="upload">
+      <!-- アップロード画像 -->
+      <img id="uploadPreview" class="camera-fill hidden" alt="upload">
 
-      <!-- キャプチャ用canvas（非表示） -->
-      <canvas id="captureCanvas" class="hidden"></canvas>
+      <!-- キャプチャ用canvas -->
+      <canvas id="captureCanvas" class="hidden" style="position:absolute;"></canvas>
 
       <!-- オーバーレイ -->
       <div class="overlay">
@@ -73,23 +87,20 @@
         </div>
       </div>
 
-      <!-- カメラフォールバック / エラー表示 -->
+      <!-- カメラフォールバック -->
       <div id="cameraFallback" class="hidden absolute inset-0 flex flex-col items-center justify-center text-slate-500 bg-slate-900/95 z-10">
         <svg class="w-12 h-12 mb-3 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M15 13a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
         <p class="text-sm font-medium mb-1">カメラを使用できません</p>
         <p class="text-xs text-slate-600 text-center px-6" id="cameraErrorMsg">HTTPS環境でカメラ権限を許可してください</p>
-
-        <!-- ファイルアップロード代替 -->
         <label class="mt-4 px-4 py-2 bg-sky-500 hover:bg-sky-400 text-white text-sm font-bold rounded-lg cursor-pointer transition active:scale-95 flex items-center gap-2">
           <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
           画像をアップロード
           <input type="file" id="fileInput" accept="image/*" class="hidden" capture="environment">
         </label>
-        <p class="text-[10px] text-slate-600 mt-2">またはライブラリから選択</p>
       </div>
 
       <!-- カメラ起動中ローディング -->
-      <div id="cameraLoading" class="absolute inset-0 flex flex-col items-center justify-center bg-slate-900 z-20">
+      <div id="cameraLoading" class="absolute inset-0 flex flex-col items-center justify-center bg-black z-20">
         <div class="loader mb-3"></div>
         <p class="text-sm text-slate-400">カメラを起動しています...</p>
         <p class="text-xs text-slate-600 mt-1">初回はカメラ権限の許可が必要です</p>
@@ -176,7 +187,6 @@
 </button>
 
 <script>
-// === State ===
 let stream = null;
 let currentShape = null;
 let detectedLabel = null;
@@ -185,7 +195,6 @@ let useUpload = false;
 let uploadedImage = null;
 const { jsPDF } = window.jspdf;
 
-// === DOM ===
 const video = document.getElementById('video');
 const captureCanvas = document.getElementById('captureCanvas');
 const netCanvas = document.getElementById('netCanvas');
@@ -199,38 +208,24 @@ const cameraFallback = document.getElementById('cameraFallback');
 const cameraErrorMsg = document.getElementById('cameraErrorMsg');
 const shutterBtn = document.getElementById('shutterBtn');
 
-// === Camera Init ===
 async function initCamera() {
-  // まずgetUserMediaの存在確認
   if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
     showCameraError('お使いのブラウザはカメラをサポートしていません');
     return;
   }
-
   try {
     stream = await navigator.mediaDevices.getUserMedia({ 
-      video: { 
-        facingMode: { ideal: 'environment' },
-        width: { ideal: 1280 },
-        height: { ideal: 720 }
-      }, 
+      video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } }, 
       audio: false 
     });
-
     video.srcObject = stream;
-
     video.onloadedmetadata = () => {
       cameraLoading.classList.add('hidden');
       video.play();
     };
-
-    // 5秒以内にloadedmetadataが発火しない場合もローディング解除
     setTimeout(() => {
-      if (!cameraLoading.classList.contains('hidden')) {
-        cameraLoading.classList.add('hidden');
-      }
+      if (!cameraLoading.classList.contains('hidden')) cameraLoading.classList.add('hidden');
     }, 5000);
-
   } catch (err) {
     console.error('Camera error:', err.name, err.message);
     let msg = 'カメラを起動できませんでした';
@@ -241,7 +236,7 @@ async function initCamera() {
     } else if (err.name === 'NotReadableError') {
       msg = 'カメラが他のアプリで使用中です。';
     } else if (location.protocol !== 'https:' && location.hostname !== 'localhost') {
-      msg = 'HTTPS環境が必要です。GitHub Pagesでホスティングしてください。';
+      msg = 'HTTPS環境が必要です。';
     }
     showCameraError(msg);
   }
@@ -251,18 +246,15 @@ function showCameraError(msg) {
   cameraLoading.classList.add('hidden');
   cameraFallback.classList.remove('hidden');
   cameraErrorMsg.textContent = msg;
-  // 撮影ボタンを無効化し、アップロード誘導
   shutterBtn.disabled = true;
   shutterBtn.innerHTML = '<span class="text-xs">画像をアップロードしてください</span>';
 }
 
 initCamera();
 
-// === File Upload Fallback ===
 fileInput.addEventListener('change', (e) => {
   const file = e.target.files[0];
   if (!file) return;
-
   const reader = new FileReader();
   reader.onload = (evt) => {
     uploadedImage = new Image();
@@ -282,7 +274,6 @@ fileInput.addEventListener('change', (e) => {
   reader.readAsDataURL(file);
 });
 
-// === Shape Mapping ===
 const shapeMap = {
   bottle: { shape: 'cylinder', name: 'ペットボトル', reason: '側面が円筒状で、上面と下面が平行な円であるため' },
   cup: { shape: 'frustum', name: 'コップ', reason: '上面の直径が下面より大きく、円すい台として近似できるため' },
@@ -303,36 +294,28 @@ const shapeData = {
   sphere: { label: '球', color: '#ec4899', faces: 1 }
 };
 
-// === Capture & Detect ===
 shutterBtn.addEventListener('click', async () => {
   const isMock = document.getElementById('mockToggle').checked;
-
-  // UI state
   document.getElementById('scanLine').classList.remove('hidden');
   shutterBtn.disabled = true;
   shutterBtn.innerHTML = '<div class="loader w-5 h-5 border-2"></div> 解析中...';
-
   await new Promise(r => setTimeout(r, 1200));
 
-  // Capture to canvas
   let w, h, ctx;
   if (useUpload && uploadedImage) {
     w = uploadedImage.naturalWidth || 640;
     h = uploadedImage.naturalHeight || 480;
-    captureCanvas.width = w;
-    captureCanvas.height = h;
+    captureCanvas.width = w; captureCanvas.height = h;
     ctx = captureCanvas.getContext('2d');
     ctx.drawImage(uploadedImage, 0, 0, w, h);
   } else {
     w = video.videoWidth || 640;
     h = video.videoHeight || 480;
-    captureCanvas.width = w;
-    captureCanvas.height = h;
+    captureCanvas.width = w; captureCanvas.height = h;
     ctx = captureCanvas.getContext('2d');
     ctx.drawImage(video, 0, 0, w, h);
   }
 
-  // Detection
   let result;
   if (isMock) {
     const keys = Object.keys(shapeMap);
@@ -344,22 +327,18 @@ shutterBtn.addEventListener('click', async () => {
   detectedLabel = result;
   currentShape = result.shape;
 
-  // Show detection overlay
   document.getElementById('scanLine').classList.add('hidden');
   document.getElementById('detectionOverlay').classList.remove('hidden');
   document.getElementById('detectLabel').textContent = result.name;
 
-  // Show abstraction
   document.getElementById('detectedObject').textContent = `${result.name}（${result.shape === 'frustum' ? 'コップ' : '検出'}）`;
   document.getElementById('abstractionSection').classList.remove('hidden');
-
   selectShape(result.shape);
 
   document.getElementById('vizSection').classList.remove('hidden');
   drawNet(currentShape);
   drawSolid(currentShape);
   initQuiz();
-
   addHistory(result.name, currentShape);
 
   shutterBtn.classList.add('hidden');
@@ -370,12 +349,9 @@ async function heuristicDetect(ctx, w, h) {
   const frame = ctx.getImageData(0, 0, w, h);
   const data = frame.data;
   let r=0, g=0, b=0, count=0;
-  for (let i=0; i<data.length; i+=4) {
-    r += data[i]; g += data[i+1]; b += data[i+2]; count++;
-  }
+  for (let i=0; i<data.length; i+=4) { r += data[i]; g += data[i+1]; b += data[i+2]; count++; }
   r/=count; g/=count; b/=count;
   const aspect = w/h;
-
   if (aspect > 1.8) return shapeMap.book;
   if (aspect < 0.6) return shapeMap.bottle;
   if (r > 180 && g > 140 && g < 200) return shapeMap.orange;
@@ -383,7 +359,6 @@ async function heuristicDetect(ctx, w, h) {
   return shapeMap.cup;
 }
 
-// === Shape Selection ===
 document.querySelectorAll('.shape-btn').forEach(btn => {
   btn.addEventListener('click', () => {
     selectShape(btn.dataset.shape);
@@ -396,7 +371,6 @@ function selectShape(shape) {
   currentShape = shape;
   document.querySelectorAll('.shape-btn').forEach(b => b.classList.remove('active'));
   document.querySelector(`[data-shape="${shape}"]`).classList.add('active');
-
   const tip = document.getElementById('learningTip');
   const info = shapeData[shape];
   const reason = detectedLabel?.reason || `${info.label}の特徴（面数: ${info.faces}）に近似されます`;
@@ -404,17 +378,13 @@ function selectShape(shape) {
   tip.classList.remove('hidden');
 }
 
-// === Drawing: Net ===
 function drawNet(shape) {
   const c = netCanvas;
   const ctx = ctxNet;
   const size = Math.min(c.parentElement.clientWidth, 400);
   c.width = size; c.height = size;
   ctx.clearRect(0, 0, size, size);
-  ctx.lineWidth = 2;
-  ctx.strokeStyle = '#334155';
-  ctx.fillStyle = '#f1f5f9';
-
+  ctx.lineWidth = 2; ctx.strokeStyle = '#334155'; ctx.fillStyle = '#f1f5f9';
   const cx = size/2, cy = size/2, u = size/6;
 
   if (shape === 'cuboid') {
@@ -426,9 +396,7 @@ function drawNet(shape) {
       ctx.fillStyle = i===1 ? '#e0f2fe' : '#f1f5f9';
       ctx.fillRect(f[0], f[1], f[2], f[3]);
       ctx.strokeRect(f[0], f[1], f[2], f[3]);
-      ctx.fillStyle = '#64748b';
-      ctx.font = '12px sans-serif';
-      ctx.textAlign = 'center';
+      ctx.fillStyle = '#64748b'; ctx.font = '12px sans-serif'; ctx.textAlign = 'center';
       const labels = ['上面','前面','左面','右面','後面','下面'];
       ctx.fillText(labels[i], f[0]+u, f[1]+u+4);
     });
@@ -457,7 +425,6 @@ function drawNet(shape) {
     ctx.beginPath(); ctx.moveTo(cx, cy-2.5*u); ctx.lineTo(cx-1.5*u, cy+u); ctx.lineTo(cx+1.5*u, cy+u); ctx.closePath(); ctx.fill(); ctx.stroke();
     ctx.fillStyle = '#64748b'; ctx.fillText('底面', cx, cy+2*u+4); ctx.fillText('側面', cx, cy-0.5*u);
   } else if (shape === 'prism') {
-    const h = 1.5*u;
     ctx.beginPath(); ctx.moveTo(cx, cy-2.5*u); ctx.lineTo(cx-u, cy-u); ctx.lineTo(cx+u, cy-u); ctx.closePath(); ctx.fill(); ctx.stroke();
     ctx.beginPath(); ctx.moveTo(cx, cy+2.5*u); ctx.lineTo(cx-u, cy+u); ctx.lineTo(cx+u, cy+u); ctx.closePath(); ctx.fill(); ctx.stroke();
     ctx.fillRect(cx-u, cy-u, 2*u, 2*u); ctx.strokeRect(cx-u, cy-u, 2*u, 2*u);
@@ -470,7 +437,6 @@ function drawNet(shape) {
   }
 }
 
-// === Drawing: Solid ===
 function drawSolid(shape) {
   const c = solidCanvas;
   const ctx = ctxSolid;
@@ -478,7 +444,6 @@ function drawSolid(shape) {
   c.width = size; c.height = size;
   ctx.clearRect(0, 0, size, size);
   const cx = size/2, cy = size/2, u = size/5;
-
   ctx.lineWidth = 2; ctx.strokeStyle = '#334155'; ctx.fillStyle = '#e0f2fe';
 
   if (shape === 'cuboid') {
@@ -522,7 +487,6 @@ function drawSolid(shape) {
   }
 }
 
-// === Quiz ===
 function initQuiz() {
   const container = document.getElementById('quizOptions');
   container.innerHTML = '';
@@ -530,7 +494,6 @@ function initQuiz() {
   const correct = currentShape;
   const options = [correct, ...shapes.filter(s => s !== correct).sort(() => Math.random()-0.5).slice(0,3)];
   options.sort(() => Math.random()-0.5);
-
   options.forEach(opt => {
     const btn = document.createElement('button');
     btn.className = 'py-3 rounded-lg border border-slate-600 bg-slate-800/50 text-sm font-medium text-slate-300 hover:bg-slate-700 transition';
@@ -550,7 +513,6 @@ function initQuiz() {
   });
 }
 
-// === Tabs ===
 document.querySelectorAll('.tab-btn').forEach(btn => {
   btn.addEventListener('click', () => {
     document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
@@ -562,7 +524,6 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
   });
 });
 
-// === PDF Export ===
 document.getElementById('downloadPdfBtn').addEventListener('click', () => {
   const pdf = new jsPDF({ orientation: 'p', unit: 'mm', format: 'a4' });
   pdf.setFont('helvetica');
@@ -571,17 +532,14 @@ document.getElementById('downloadPdfBtn').addEventListener('click', () => {
   pdf.text(`検出物体: ${detectedLabel?.name || 'Unknown'}`, 20, 40);
   pdf.text(`抽象形状: ${shapeData[currentShape].label}`, 20, 50);
   pdf.text(`生成日時: ${new Date().toLocaleString('ja-JP')}`, 20, 60);
-
   const imgData = netCanvas.toDataURL('image/png');
   const imgProps = pdf.getImageProperties(imgData);
   const pdfWidth = 170;
   const pdfHeight = (imgProps.height * pdfWidth) / imgProps.width;
   pdf.addImage(imgData, 'PNG', 20, 80, pdfWidth, pdfHeight);
-
   pdf.save(`shapelens_${currentShape}_${Date.now()}.pdf`);
 });
 
-// === SVG Export ===
 document.getElementById('downloadSvgBtn').addEventListener('click', () => {
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="400" height="400" viewBox="0 0 400 400">
     <rect width="100%" height="100%" fill="#f8fafc"/>
@@ -595,7 +553,6 @@ document.getElementById('downloadSvgBtn').addEventListener('click', () => {
   URL.revokeObjectURL(url);
 });
 
-// === History ===
 function addHistory(name, shape) {
   const entry = { date: new Date().toISOString(), name, shape };
   history.unshift(entry);
@@ -625,7 +582,6 @@ document.getElementById('historyToggle').addEventListener('click', () => {
   sec.classList.toggle('hidden');
 });
 
-// === Reset ===
 document.getElementById('resetBtn').addEventListener('click', () => {
   document.getElementById('abstractionSection').classList.add('hidden');
   document.getElementById('vizSection').classList.add('hidden');
@@ -637,8 +593,6 @@ document.getElementById('resetBtn').addEventListener('click', () => {
     <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 13a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
     撮影・解析`;
   currentShape = null;
-
-  // Reset upload state
   if (useUpload) {
     useUpload = false;
     uploadedImage = null;
