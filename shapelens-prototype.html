@@ -1,0 +1,545 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="theme-color" content="#0f172a">
+<title>ShapeLens - 実世界物体抽象化・展開図生成</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;700&display=swap');
+  body { font-family: 'Noto Sans JP', sans-serif; background: #0f172a; color: #e2e8f0; overflow-x: hidden; }
+  .glass { background: rgba(30,41,59,0.7); backdrop-filter: blur(12px); border: 1px solid rgba(148,163,184,0.1); }
+  .camera-container { position: relative; width: 100%; aspect-ratio: 4/3; background: #020617; border-radius: 1rem; overflow: hidden; }
+  video, #captureCanvas { width: 100%; height: 100%; object-fit: cover; }
+  .overlay { position: absolute; inset: 0; pointer-events: none; }
+  .scan-line { position: absolute; width: 100%; height: 2px; background: linear-gradient(90deg, transparent, #38bdf8, transparent); animation: scan 2.5s linear infinite; opacity: 0.6; }
+  @keyframes scan { 0% { top: 10%; } 50% { top: 90%; } 100% { top: 10%; } }
+  .shape-btn { transition: all 0.2s; }
+  .shape-btn.active { background: #0ea5e9; color: white; border-color: #0ea5e9; }
+  .tab-btn { transition: all 0.2s; }
+  .tab-btn.active { border-bottom: 2px solid #38bdf8; color: #38bdf8; }
+  .net-canvas { background: #f8fafc; border-radius: 0.75rem; width: 100%; aspect-ratio: 1; }
+  .hidden { display: none !important; }
+  .fade-in { animation: fadeIn 0.4s ease-out; }
+  @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+  .loader { border: 3px solid rgba(56,189,248,0.2); border-top-color: #38bdf8; border-radius: 50%; width: 40px; height: 40px; animation: spin 1s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .ar-badge { position: absolute; background: rgba(15,23,42,0.8); color: #38bdf8; padding: 4px 10px; border-radius: 999px; font-size: 0.75rem; font-weight: 700; border: 1px solid rgba(56,189,248,0.3); }
+</style>
+</head>
+<body class="min-h-screen pb-24">
+
+<!-- Header -->
+<header class="fixed top-0 w-full z-50 glass border-b border-slate-700/50">
+  <div class="max-w-md mx-auto px-4 h-14 flex items-center justify-between">
+    <div class="flex items-center gap-2">
+      <div class="w-8 h-8 rounded-lg bg-gradient-to-br from-sky-400 to-blue-600 flex items-center justify-center text-white font-bold text-sm">S</div>
+      <h1 class="font-bold text-lg tracking-tight">ShapeLens</h1>
+    </div>
+    <div class="text-xs text-slate-400 font-medium">MVP Prototype</div>
+  </div>
+</header>
+
+<main class="max-w-md mx-auto px-4 pt-20 space-y-6">
+
+  <!-- Camera Section -->
+  <section id="cameraSection" class="space-y-3">
+    <div class="flex items-center justify-between">
+      <h2 class="font-bold text-slate-200">1. 物体を撮影</h2>
+      <label class="flex items-center gap-2 text-xs text-slate-400 cursor-pointer">
+        <input type="checkbox" id="mockToggle" class="accent-sky-500"> モックモード
+      </label>
+    </div>
+    <div class="camera-container shadow-2xl shadow-sky-900/20">
+      <video id="video" autoplay playsinline muted></video>
+      <canvas id="captureCanvas" class="hidden"></canvas>
+      <div class="overlay">
+        <div class="scan-line hidden" id="scanLine"></div>
+        <div id="detectionOverlay" class="hidden absolute inset-0">
+          <div class="absolute border-2 border-sky-400/80 rounded-lg" id="bbox" style="left:20%; top:30%; width:60%; height:40%;">
+            <div class="ar-badge -top-3 left-0" id="detectLabel">解析中...</div>
+          </div>
+        </div>
+      </div>
+      <div id="cameraFallback" class="hidden absolute inset-0 flex flex-col items-center justify-center text-slate-500">
+        <svg class="w-12 h-12 mb-2 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M15 13a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+        <p class="text-sm">カメラを使用できません</p>
+      </div>
+    </div>
+    <div class="flex gap-3">
+      <button id="shutterBtn" class="flex-1 bg-sky-500 hover:bg-sky-400 text-white font-bold py-3 rounded-xl shadow-lg shadow-sky-500/25 transition active:scale-95 flex items-center justify-center gap-2">
+        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 13a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+        撮影・解析
+      </button>
+      <button id="resetBtn" class="hidden px-4 bg-slate-700 hover:bg-slate-600 text-white font-bold rounded-xl transition active:scale-95">
+        リセット
+      </button>
+    </div>
+  </section>
+
+  <!-- Abstraction Section -->
+  <section id="abstractionSection" class="hidden fade-in space-y-3">
+    <h2 class="font-bold text-slate-200">2. 形状抽象化</h2>
+    <div class="glass rounded-xl p-4 space-y-3">
+      <div class="flex items-center gap-3">
+        <div class="w-10 h-10 rounded-lg bg-slate-700 flex items-center justify-center text-xl">📷</div>
+        <div>
+          <div class="text-sm text-slate-400">検出物体</div>
+          <div class="font-bold text-sky-400" id="detectedObject">--</div>
+        </div>
+      </div>
+      <div class="h-px bg-slate-700/50"></div>
+      <div class="text-sm text-slate-300">教育向けに近似する形状を選択：</div>
+      <div class="grid grid-cols-3 gap-2">
+        <button class="shape-btn py-2 px-1 rounded-lg border border-slate-600 bg-slate-800/50 text-xs font-medium text-slate-300" data-shape="cuboid">直方体</button>
+        <button class="shape-btn py-2 px-1 rounded-lg border border-slate-600 bg-slate-800/50 text-xs font-medium text-slate-300" data-shape="cylinder">円柱</button>
+        <button class="shape-btn py-2 px-1 rounded-lg border border-slate-600 bg-slate-800/50 text-xs font-medium text-slate-300" data-shape="frustum">円すい台</button>
+        <button class="shape-btn py-2 px-1 rounded-lg border border-slate-600 bg-slate-800/50 text-xs font-medium text-slate-300" data-shape="cone">円すい</button>
+        <button class="shape-btn py-2 px-1 rounded-lg border border-slate-600 bg-slate-800/50 text-xs font-medium text-slate-300" data-shape="prism">三角柱</button>
+        <button class="shape-btn py-2 px-1 rounded-lg border border-slate-600 bg-slate-800/50 text-xs font-medium text-slate-300" data-shape="sphere">球</button>
+      </div>
+      <div id="learningTip" class="hidden text-xs bg-sky-900/30 border border-sky-800/50 rounded-lg p-3 text-sky-200 leading-relaxed"></div>
+    </div>
+  </section>
+
+  <!-- Visualization Section -->
+  <section id="vizSection" class="hidden fade-in space-y-3">
+    <h2 class="font-bold text-slate-200">3. 可視化</h2>
+    <div class="glass rounded-xl overflow-hidden">
+      <div class="flex border-b border-slate-700/50">
+        <button class="tab-btn flex-1 py-3 text-sm font-medium text-slate-400 active" data-tab="net">展開図</button>
+        <button class="tab-btn flex-1 py-3 text-sm font-medium text-slate-400" data-tab="solid">立体図</button>
+        <button class="tab-btn flex-1 py-3 text-sm font-medium text-slate-400" data-tab="quiz">クイズ</button>
+      </div>
+      <div class="p-4">
+        <div id="tab-net" class="tab-content">
+          <canvas id="netCanvas" class="net-canvas"></canvas>
+          <div class="flex gap-2 mt-3">
+            <button id="downloadSvgBtn" class="flex-1 py-2 rounded-lg border border-slate-600 text-xs font-medium text-slate-300 hover:bg-slate-800 transition">SVG保存</button>
+            <button id="downloadPdfBtn" class="flex-1 py-2 rounded-lg bg-sky-500 hover:bg-sky-400 text-white text-xs font-bold shadow-lg shadow-sky-500/20 transition">PDF出力</button>
+          </div>
+        </div>
+        <div id="tab-solid" class="tab-content hidden">
+          <canvas id="solidCanvas" class="net-canvas"></canvas>
+          <p class="text-xs text-slate-500 mt-2 text-center">等角投影による立体図</p>
+        </div>
+        <div id="tab-quiz" class="tab-content hidden space-y-3">
+          <div class="text-sm text-slate-300 text-center py-4">この物体の抽象形状は何でしょう？</div>
+          <div class="grid grid-cols-2 gap-2" id="quizOptions"></div>
+          <div id="quizResult" class="hidden text-center text-sm font-bold py-2 rounded-lg"></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- History -->
+  <section id="historySection" class="hidden fade-in space-y-3">
+    <h2 class="font-bold text-slate-200">学習履歴</h2>
+    <div id="historyList" class="space-y-2"></div>
+  </section>
+
+</main>
+
+<!-- Floating Action Button -->
+<button id="historyToggle" class="fixed bottom-6 right-4 w-12 h-12 rounded-full bg-slate-800 border border-slate-700 text-slate-300 shadow-xl flex items-center justify-center hover:bg-slate-700 transition z-40">
+  <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+</button>
+
+<script>
+// === State ===
+let stream = null;
+let currentShape = null;
+let detectedLabel = null;
+let history = JSON.parse(localStorage.getItem('shapelens_history') || '[]');
+const { jsPDF } = window.jspdf;
+
+// === DOM ===
+const video = document.getElementById('video');
+const captureCanvas = document.getElementById('captureCanvas');
+const netCanvas = document.getElementById('netCanvas');
+const solidCanvas = document.getElementById('solidCanvas');
+const ctxNet = netCanvas.getContext('2d');
+const ctxSolid = solidCanvas.getContext('2d');
+
+// === Camera ===
+async function initCamera() {
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' }, audio: false });
+    video.srcObject = stream;
+  } catch(e) {
+    document.getElementById('cameraFallback').classList.remove('hidden');
+  }
+}
+initCamera();
+
+// === Shape Mapping ===
+const shapeMap = {
+  bottle: { shape: 'cylinder', name: 'ペットボトル', reason: '側面が円筒状で、上面と下面が平行な円であるため' },
+  cup: { shape: 'frustum', name: 'コップ', reason: '上面の直径が下面より大きく、円すい台として近似できるため' },
+  book: { shape: 'cuboid', name: '本', reason: '6つの面がすべて長方形で、対辺が平行であるため' },
+  chair: { shape: 'cuboid', name: '椅子', reason: '座面と脚が直方体の組み合わせとして表現できるため' },
+  cell phone: { shape: 'cuboid', name: 'スマートフォン', reason: '薄い直方体の形状をしているため' },
+  bowl: { shape: 'frustum', name: 'ボウル', reason: '半球に近い形状だが、円すい台として近似可能なため' },
+  orange: { shape: 'sphere', name: 'オレンジ', reason: 'どの方向から見ても円形に近いため' },
+  banana: { shape: 'prism', name: 'バナナ', reason: '三角柱に近い断面形状を持つため' }
+};
+
+const shapeData = {
+  cuboid: { label: '直方体', color: '#0ea5e9', faces: 6 },
+  cylinder: { label: '円柱', color: '#8b5cf6', faces: 3 },
+  frustum: { label: '円すい台', color: '#f59e0b', faces: 3 },
+  cone: { label: '円すい', color: '#ef4444', faces: 2 },
+  prism: { label: '三角柱', color: '#10b981', faces: 5 },
+  sphere: { label: '球', color: '#ec4899', faces: 1 }
+};
+
+// === Capture & Detect ===
+document.getElementById('shutterBtn').addEventListener('click', async () => {
+  const isMock = document.getElementById('mockToggle').checked;
+
+  // UI state
+  document.getElementById('scanLine').classList.remove('hidden');
+  document.getElementById('shutterBtn').disabled = true;
+  document.getElementById('shutterBtn').innerHTML = '<div class="loader w-5 h-5 border-2"></div> 解析中...';
+
+  await new Promise(r => setTimeout(r, 1200));
+
+  // Capture to canvas
+  captureCanvas.width = video.videoWidth || 640;
+  captureCanvas.height = video.videoHeight || 480;
+  const ctx = captureCanvas.getContext('2d');
+  ctx.drawImage(video, 0, 0, captureCanvas.width, captureCanvas.height);
+
+  // Detection (mock or heuristic)
+  let result;
+  if (isMock) {
+    const keys = Object.keys(shapeMap);
+    result = shapeMap[keys[Math.floor(Math.random() * keys.length)]];
+  } else {
+    // Simple heuristic: analyze aspect ratio and color
+    result = await heuristicDetect(ctx, captureCanvas.width, captureCanvas.height);
+  }
+
+  detectedLabel = result;
+  currentShape = result.shape;
+
+  // Show detection overlay
+  document.getElementById('scanLine').classList.add('hidden');
+  document.getElementById('detectionOverlay').classList.remove('hidden');
+  document.getElementById('detectLabel').textContent = result.name;
+
+  // Show abstraction
+  document.getElementById('detectedObject').textContent = `${result.name}（${result.shape === 'frustum' ? 'コップ' : '検出'}）`;
+  document.getElementById('abstractionSection').classList.remove('hidden');
+
+  // Auto-select shape
+  selectShape(result.shape);
+
+  // Show viz
+  document.getElementById('vizSection').classList.remove('hidden');
+  drawNet(currentShape);
+  drawSolid(currentShape);
+  initQuiz();
+
+  // Save history
+  addHistory(result.name, currentShape);
+
+  // Buttons
+  document.getElementById('shutterBtn').classList.add('hidden');
+  document.getElementById('resetBtn').classList.remove('hidden');
+});
+
+// Heuristic detection based on image analysis
+async function heuristicDetect(ctx, w, h) {
+  const frame = ctx.getImageData(0, 0, w, h);
+  const data = frame.data;
+  let r=0, g=0, b=0, count=0;
+  for (let i=0; i<data.length; i+=4) {
+    r += data[i]; g += data[i+1]; b += data[i+2]; count++;
+  }
+  r/=count; g/=count; b/=count;
+  const aspect = w/h;
+
+  // Simple rules
+  if (aspect > 1.8) return shapeMap.book;
+  if (aspect < 0.6) return shapeMap.bottle;
+  if (r > 180 && g > 140 && g < 200) return shapeMap.orange;
+  if (b > r && b > g) return shapeMap.bottle;
+  return shapeMap.cup; // default
+}
+
+// === Shape Selection ===
+document.querySelectorAll('.shape-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    selectShape(btn.dataset.shape);
+    drawNet(currentShape);
+    drawSolid(currentShape);
+  });
+});
+
+function selectShape(shape) {
+  currentShape = shape;
+  document.querySelectorAll('.shape-btn').forEach(b => b.classList.remove('active'));
+  document.querySelector(`[data-shape="${shape}"]`).classList.add('active');
+
+  const tip = document.getElementById('learningTip');
+  const info = shapeData[shape];
+  const reason = detectedLabel?.reason || `${info.label}の特徴（面数: ${info.faces}）に近似されます`;
+  tip.innerHTML = `<strong>学習モード：</strong>この物体は<strong>${info.label}</strong>として近似されました。<br>理由：${reason}`;
+  tip.classList.remove('hidden');
+}
+
+// === Drawing: Net (展開図) ===
+function drawNet(shape) {
+  const c = netCanvas;
+  const ctx = ctxNet;
+  const size = Math.min(c.parentElement.clientWidth, 400);
+  c.width = size; c.height = size;
+  ctx.clearRect(0, 0, size, size);
+  ctx.lineWidth = 2;
+  ctx.strokeStyle = '#334155';
+  ctx.fillStyle = '#f1f5f9';
+
+  const cx = size/2, cy = size/2, u = size/6;
+
+  if (shape === 'cuboid') {
+    // Cross net
+    const faces = [
+      [cx-u, cy-3*u, 2*u, 2*u], // top
+      [cx-u, cy-u, 2*u, 2*u],   // front
+      [cx-3*u, cy-u, 2*u, 2*u], // left
+      [cx+u, cy-u, 2*u, 2*u],   // right
+      [cx+3*u, cy-u, 2*u, 2*u], // back
+      [cx-u, cy+u, 2*u, 2*u]    // bottom
+    ];
+    faces.forEach((f,i) => {
+      ctx.fillStyle = i===1 ? '#e0f2fe' : '#f1f5f9';
+      ctx.fillRect(f[0], f[1], f[2], f[3]);
+      ctx.strokeRect(f[0], f[1], f[2], f[3]);
+      ctx.fillStyle = '#64748b';
+      ctx.font = '12px sans-serif';
+      ctx.textAlign = 'center';
+      const labels = ['上面','前面','左面','右面','後面','下面'];
+      ctx.fillText(labels[i], f[0]+u, f[1]+u+4);
+    });
+  } else if (shape === 'cylinder') {
+    // Two circles + rectangle
+    ctx.fillStyle = '#f1f5f9';
+    ctx.beginPath(); ctx.arc(cx, cy-2.2*u, u, 0, Math.PI*2); ctx.fill(); ctx.stroke();
+    ctx.beginPath(); ctx.arc(cx, cy+2.2*u, u, 0, Math.PI*2); ctx.fill(); ctx.stroke();
+    ctx.fillRect(cx-Math.PI*u, cy-u, 2*Math.PI*u, 2*u);
+    ctx.strokeRect(cx-Math.PI*u, cy-u, 2*Math.PI*u, 2*u);
+    ctx.fillStyle = '#64748b';
+    ctx.fillText('側面', cx, cy+4);
+    ctx.fillText('上底', cx, cy-2.2*u+4);
+    ctx.fillText('下底', cx, cy+2.2*u+4);
+  } else if (shape === 'frustum') {
+    // Two circles (different sizes) + trapezoid sector
+    ctx.beginPath(); ctx.arc(cx, cy-2.5*u, 0.7*u, 0, Math.PI*2); ctx.fill(); ctx.stroke();
+    ctx.beginPath(); ctx.arc(cx, cy+2.5*u, u, 0, Math.PI*2); ctx.fill(); ctx.stroke();
+    // Side as trapezoid
+    ctx.beginPath();
+    ctx.moveTo(cx-1.8*u, cy-u); ctx.lineTo(cx+1.8*u, cy-u);
+    ctx.lineTo(cx+2.2*u, cy+u); ctx.lineTo(cx-2.2*u, cy+u);
+    ctx.closePath(); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = '#64748b'; ctx.fillText('側面', cx, cy+4);
+    ctx.fillText('上底', cx, cy-2.5*u+4);
+    ctx.fillText('下底', cx, cy+2.5*u+4);
+  } else if (shape === 'cone') {
+    ctx.beginPath(); ctx.arc(cx, cy+2*u, u, 0, Math.PI*2); ctx.fill(); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(cx, cy-2.5*u); ctx.lineTo(cx-1.5*u, cy+u); ctx.lineTo(cx+1.5*u, cy+u); ctx.closePath(); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = '#64748b'; ctx.fillText('底面', cx, cy+2*u+4); ctx.fillText('側面', cx, cy-0.5*u);
+  } else if (shape === 'prism') {
+    // Triangles + rectangles
+    const h = 1.5*u;
+    ctx.beginPath(); ctx.moveTo(cx, cy-2.5*u); ctx.lineTo(cx-u, cy-u); ctx.lineTo(cx+u, cy-u); ctx.closePath(); ctx.fill(); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(cx, cy+2.5*u); ctx.lineTo(cx-u, cy+u); ctx.lineTo(cx+u, cy+u); ctx.closePath(); ctx.fill(); ctx.stroke();
+    ctx.fillRect(cx-u, cy-u, 2*u, 2*u); ctx.strokeRect(cx-u, cy-u, 2*u, 2*u);
+    ctx.fillStyle = '#64748b'; ctx.fillText('側面', cx, cy+4);
+  } else if (shape === 'sphere') {
+    ctx.beginPath(); ctx.arc(cx, cy, 2*u, 0, Math.PI*2); ctx.fill(); ctx.stroke();
+    ctx.beginPath(); ctx.arc(cx, cy, 2*u, 0, Math.PI, false); ctx.stroke();
+    ctx.beginPath(); ctx.ellipse(cx, cy, 2*u, 0.6*u, 0, 0, Math.PI*2); ctx.stroke();
+    ctx.fillStyle = '#64748b'; ctx.fillText('球（展開図不可）', cx, cy+4);
+  }
+}
+
+// === Drawing: Solid (立体図) ===
+function drawSolid(shape) {
+  const c = solidCanvas;
+  const ctx = ctxSolid;
+  const size = Math.min(c.parentElement.clientWidth, 400);
+  c.width = size; c.height = size;
+  ctx.clearRect(0, 0, size, size);
+  const cx = size/2, cy = size/2, u = size/5;
+
+  ctx.lineWidth = 2; ctx.strokeStyle = '#334155'; ctx.fillStyle = '#e0f2fe';
+
+  if (shape === 'cuboid') {
+    // Isometric-ish
+    const pts = [[cx-u,cy-u],[cx+u,cy-u],[cx+u,cy+u],[cx-u,cy+u]];
+    const top = pts.map(p => [p[0]+0.4*u, p[1]-0.4*u]);
+    ctx.beginPath(); top.forEach((p,i) => { if(i===0) ctx.moveTo(p[0],p[1]); else ctx.lineTo(p[0],p[1]); }); ctx.closePath(); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = '#bae6fd';
+    ctx.beginPath(); ctx.moveTo(pts[0][0],pts[0][1]); ctx.lineTo(pts[1][0],pts[1][1]); ctx.lineTo(top[1][0],top[1][1]); ctx.lineTo(top[0][0],top[0][1]); ctx.closePath(); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = '#7dd3fc';
+    ctx.beginPath(); ctx.moveTo(pts[1][0],pts[1][1]); ctx.lineTo(pts[2][0],pts[2][1]); ctx.lineTo(top[2][0],top[2][1]); ctx.lineTo(top[1][0],top[1][1]); ctx.closePath(); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = '#f1f5f9';
+    ctx.beginPath(); pts.forEach((p,i) => { if(i===0) ctx.moveTo(p[0],p[1]); else ctx.lineTo(p[0],p[1]); }); ctx.closePath(); ctx.fill(); ctx.stroke();
+  } else if (shape === 'cylinder') {
+    ctx.fillStyle = '#e0f2fe';
+    ctx.beginPath(); ctx.ellipse(cx, cy-u, u, 0.3*u, 0, 0, Math.PI*2); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = '#bae6fd';
+    ctx.fillRect(cx-u, cy-u, 2*u, 2*u); ctx.strokeRect(cx-u, cy-u, 2*u, 2*u);
+    ctx.beginPath(); ctx.ellipse(cx, cy+u, u, 0.3*u, 0, 0, Math.PI*2); ctx.fill(); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(cx-u, cy-u); ctx.lineTo(cx-u, cy+u); ctx.moveTo(cx+u, cy-u); ctx.lineTo(cx+u, cy+u); ctx.stroke();
+  } else if (shape === 'frustum') {
+    ctx.fillStyle = '#e0f2fe';
+    ctx.beginPath(); ctx.ellipse(cx, cy-1.5*u, 0.6*u, 0.2*u, 0, 0, Math.PI*2); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = '#ffedd5';
+    ctx.beginPath(); ctx.moveTo(cx-0.6*u, cy-1.5*u); ctx.lineTo(cx+0.6*u, cy-1.5*u); ctx.lineTo(cx+u, cy+1.5*u); ctx.lineTo(cx-u, cy+1.5*u); ctx.closePath(); ctx.fill(); ctx.stroke();
+    ctx.beginPath(); ctx.ellipse(cx, cy+1.5*u, u, 0.3*u, 0, 0, Math.PI*2); ctx.fill(); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(cx-0.6*u, cy-1.5*u); ctx.lineTo(cx-u, cy+1.5*u); ctx.moveTo(cx+0.6*u, cy-1.5*u); ctx.lineTo(cx+u, cy+1.5*u); ctx.stroke();
+  } else if (shape === 'cone') {
+    ctx.fillStyle = '#fee2e2';
+    ctx.beginPath(); ctx.moveTo(cx, cy-2*u); ctx.lineTo(cx-u, cy+u); ctx.lineTo(cx+u, cy+u); ctx.closePath(); ctx.fill(); ctx.stroke();
+    ctx.beginPath(); ctx.ellipse(cx, cy+u, u, 0.3*u, 0, 0, Math.PI*2); ctx.fill(); ctx.stroke();
+  } else if (shape === 'prism') {
+    ctx.fillStyle = '#d1fae5';
+    ctx.beginPath(); ctx.moveTo(cx, cy-2*u); ctx.lineTo(cx-u, cy+u); ctx.lineTo(cx+u, cy+u); ctx.closePath(); ctx.fill(); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(cx+0.5*u, cy-2.2*u); ctx.lineTo(cx+1.5*u, cy+0.8*u); ctx.lineTo(cx+0.5*u, cy+0.8*u); ctx.closePath(); ctx.fill(); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(cx, cy-2*u); ctx.lineTo(cx+0.5*u, cy-2.2*u); ctx.moveTo(cx-u, cy+u); ctx.lineTo(cx+0.5*u, cy+0.8*u); ctx.moveTo(cx+u, cy+u); ctx.lineTo(cx+1.5*u, cy+0.8*u); ctx.stroke();
+  } else if (shape === 'sphere') {
+    const grad = ctx.createRadialGradient(cx-0.3*u, cy-0.3*u, 0.2*u, cx, cy, 2*u);
+    grad.addColorStop(0, '#fce7f3'); grad.addColorStop(1, '#ec4899');
+    ctx.fillStyle = grad;
+    ctx.beginPath(); ctx.arc(cx, cy, 1.8*u, 0, Math.PI*2); ctx.fill(); ctx.stroke();
+  }
+}
+
+// === Quiz ===
+function initQuiz() {
+  const container = document.getElementById('quizOptions');
+  container.innerHTML = '';
+  const shapes = Object.keys(shapeData);
+  const correct = currentShape;
+  const options = [correct, ...shapes.filter(s => s !== correct).sort(() => Math.random()-0.5).slice(0,3)];
+  options.sort(() => Math.random()-0.5);
+
+  options.forEach(opt => {
+    const btn = document.createElement('button');
+    btn.className = 'py-3 rounded-lg border border-slate-600 bg-slate-800/50 text-sm font-medium text-slate-300 hover:bg-slate-700 transition';
+    btn.textContent = shapeData[opt].label;
+    btn.onclick = () => {
+      const res = document.getElementById('quizResult');
+      res.classList.remove('hidden');
+      if (opt === correct) {
+        res.className = 'text-center text-sm font-bold py-2 rounded-lg bg-emerald-500/20 text-emerald-400 border border-emerald-500/30';
+        res.textContent = '正解！ ' + shapeData[opt].label + ' です';
+      } else {
+        res.className = 'text-center text-sm font-bold py-2 rounded-lg bg-red-500/20 text-red-400 border border-red-500/30';
+        res.textContent = '不正解。正解は ' + shapeData[correct].label + ' です';
+      }
+    };
+    container.appendChild(btn);
+  });
+}
+
+// === Tabs ===
+document.querySelectorAll('.tab-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    document.querySelectorAll('.tab-content').forEach(c => c.classList.add('hidden'));
+    document.getElementById('tab-' + btn.dataset.tab).classList.remove('hidden');
+    if (btn.dataset.tab === 'net') drawNet(currentShape);
+    if (btn.dataset.tab === 'solid') drawSolid(currentShape);
+  });
+});
+
+// === PDF Export ===
+document.getElementById('downloadPdfBtn').addEventListener('click', () => {
+  const pdf = new jsPDF({ orientation: 'p', unit: 'mm', format: 'a4' });
+  pdf.setFont('helvetica');
+  pdf.text('ShapeLens - 展開図レポート', 105, 20, { align: 'center' });
+  pdf.setFontSize(12);
+  pdf.text(`検出物体: ${detectedLabel?.name || 'Unknown'}`, 20, 40);
+  pdf.text(`抽象形状: ${shapeData[currentShape].label}`, 20, 50);
+  pdf.text(`生成日時: ${new Date().toLocaleString('ja-JP')}`, 20, 60);
+
+  const imgData = netCanvas.toDataURL('image/png');
+  const imgProps = pdf.getImageProperties(imgData);
+  const pdfWidth = 170;
+  const pdfHeight = (imgProps.height * pdfWidth) / imgProps.width;
+  pdf.addImage(imgData, 'PNG', 20, 80, pdfWidth, pdfHeight);
+
+  pdf.save(`shapelens_${currentShape}_${Date.now()}.pdf`);
+});
+
+// === SVG Export ===
+document.getElementById('downloadSvgBtn').addEventListener('click', () => {
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="400" height="400" viewBox="0 0 400 400">
+    <rect width="100%" height="100%" fill="#f8fafc"/>
+    <text x="200" y="200" text-anchor="middle" font-size="16" fill="#64748b">${shapeData[currentShape].label} - 展開図</text>
+    <text x="200" y="230" text-anchor="middle" font-size="12" fill="#94a3b8">ShapeLens Generated</text>
+  </svg>`;
+  const blob = new Blob([svg], {type: 'image/svg+xml'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = `shapelens_${currentShape}.svg`; a.click();
+  URL.revokeObjectURL(url);
+});
+
+// === History ===
+function addHistory(name, shape) {
+  const entry = { date: new Date().toISOString(), name, shape };
+  history.unshift(entry);
+  if (history.length > 20) history.pop();
+  localStorage.setItem('shapelens_history', JSON.stringify(history));
+  renderHistory();
+}
+
+function renderHistory() {
+  const list = document.getElementById('historyList');
+  list.innerHTML = history.map((h, i) => `
+    <div class="glass rounded-lg p-3 flex items-center justify-between">
+      <div class="flex items-center gap-3">
+        <div class="w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold" style="background:${shapeData[h.shape].color}20;color:${shapeData[h.shape].color}">${shapeData[h.shape].label[0]}</div>
+        <div>
+          <div class="text-sm font-medium text-slate-200">${h.name}</div>
+          <div class="text-xs text-slate-500">${shapeData[h.shape].label} · ${new Date(h.date).toLocaleDateString('ja-JP')}</div>
+        </div>
+      </div>
+    </div>
+  `).join('');
+}
+renderHistory();
+
+document.getElementById('historyToggle').addEventListener('click', () => {
+  const sec = document.getElementById('historySection');
+  sec.classList.toggle('hidden');
+});
+
+// === Reset ===
+document.getElementById('resetBtn').addEventListener('click', () => {
+  document.getElementById('abstractionSection').classList.add('hidden');
+  document.getElementById('vizSection').classList.add('hidden');
+  document.getElementById('detectionOverlay').classList.add('hidden');
+  document.getElementById('shutterBtn').classList.remove('hidden');
+  document.getElementById('resetBtn').classList.add('hidden');
+  document.getElementById('shutterBtn').disabled = false;
+  document.getElementById('shutterBtn').innerHTML = `
+    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 13a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+    撮影・解析`;
+  currentShape = null;
+});
+
+// Resize handler
+window.addEventListener('resize', () => {
+  if (currentShape) { drawNet(currentShape); drawSolid(currentShape); }
+});
+</script>
+</body>
+</html>
